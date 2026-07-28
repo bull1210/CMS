@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+
+# Environment / secrets
+server/.env
+.env
+.env.local
+
+# Local SQLite database (patient data — never commit)
+server/prisma/*.db
+server/prisma/*.db-journal
+*.sqlite
+
+# Uploaded files and backups (patient data — never commit)
+server/storage/uploads/*
+server/storage/backups/*
+!server/storage/uploads/.gitkeep
+!server/storage/backups/.gitkeep
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS noise
+Thumbs.db
+.DS_Store

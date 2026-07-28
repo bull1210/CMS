@@ -1,0 +1,409 @@
+// Clinic Management System schema.
+// SQLite now; provider swap to postgresql/mysql later is the only change needed here.
+// SQLite limits: no native enums (validated strings used), no Json column (JSON text used).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String // ADMIN | DOCTOR | RECEPTIONIST
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  treatments     Treatment[]
+  diagnoses      Diagnosis[]
+  appointments   Appointment[]
+  documents      Document[]
+  prescriptions  Prescription[]
+  auditLogs      AuditLog[]
+  toothFindings  ToothFinding[]
+  treatmentPlans TreatmentPlan[]
+  stockTxns      StockTxn[]
+  expenses       Expense[]
+}
+
+model Patient {
+  id               Int       @id @default(autoincrement())
+  code             String    @unique // human-friendly patient ID, e.g. P-0001
+  name             String
+  gender           String? // MALE | FEMALE | OTHER
+  dob              DateTime?
+  phone            String
+  whatsapp         String?
+  email            String?
+  address          String?
+  emergencyContact String?
+  referralSource   String? // WALK_IN | GOOGLE | FRIEND_FAMILY | DOCTOR_REFERRAL | SOCIAL_MEDIA | OTHER (free text allowed)
+  active           Boolean   @default(true) // archived patients keep history but get no automated messages
+  inactiveReason   String? // MOVED_AWAY | DECEASED | SWITCHED_CLINIC | OTHER
+  medicalHistory   String    @default("{}") // JSON: diabetes, bp, heart, allergies, smoking, pregnancy, medications, custom fields
+  dentalHistory    String    @default("{}") // JSON: previous procedures/visits/conditions
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  treatments     Treatment[]
+  diagnoses      Diagnosis[]
+  appointments   Appointment[]
+  invoices       Invoice[]
+  payments       Payment[]
+  documents      Document[]
+  prescriptions  Prescription[]
+  followUps      FollowUp[]
+  messages       Message[]
+  timeline       TimelineEvent[]
+  toothFindings  ToothFinding[]
+  treatmentPlans TreatmentPlan[]
+  labWorks       LabWork[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+// Master procedure catalog. followUpId encodes the treatment-flow graph
+// (e.g. Root Canal Stage 1 -> Stage 2 after 14 days).
+model Procedure {
+  id           Int     @id @default(autoincrement())
+  name         String  @unique
+  description  String?
+  cost         Float   @default(0)
+  followUpId   Int?
+  followUp     Procedure?  @relation("TreatmentFlow", fields: [followUpId], references: [id])
+  precededBy   Procedure[] @relation("TreatmentFlow")
+  followUpDays Int?
+  active       Boolean @default(true)
+
+  treatments Treatment[]
+  followUpsRecommended FollowUp[]
+  planItems  TreatmentPlanItem[]
+}
+
+model Treatment {
+  id          Int       @id @default(autoincrement())
+  patientId   Int
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  procedureId Int
+  procedure   Procedure @relation(fields: [procedureId], references: [id])
+  doctorId    Int?
+  doctor      User?     @relation(fields: [doctorId], references: [id])
+  status      String    @default("PLANNED") // PLANNED | IN_PROGRESS | COMPLETED | CANCELLED
+  toothRefs   String? // e.g. "16,17" FDI notation
+  notes       String?
+  cost        Float     @default(0)
+  performedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  invoices        Invoice[]
+  followUpsSource FollowUp[]
+  labWorks        LabWork[]
+
+  @@index([patientId])
+}
+
+// Odontogram: per-tooth clinical findings charted by the doctor. FDI notation
+// ("11".."48" permanent, "51".."85" primary). ACTIVE findings paint the dental
+// chart; RESOLVED keeps the history without cluttering it.
+model ToothFinding {
+  id          Int       @id @default(autoincrement())
+  patientId   Int
+  patient     Patient   @relation(fields: [patientId], references: [id])
+  tooth       String // FDI tooth number
+  condition   String // CARIES | FILLED | MISSING | CROWN | ROOT_CANAL | IMPLANT | FRACTURED | OTHER
+  status      String    @default("ACTIVE") // ACTIVE | RESOLVED
+  note        String?
+  createdById Int?
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  @@index([patientId])
+}
+
+// Phased treatment plan / cost estimate presented to the patient.
+// Accepting a plan materializes its items as PLANNED treatments.
+model TreatmentPlan {
+  id        Int       @id @default(autoincrement())
+  patientId Int
+  patient   Patient   @relation(fields: [patientId], references: [id])
+  doctorId  Int?
+  doctor    User?     @relation(fields: [doctorId], references: [id])
+  title     String
+  status    String    @default("PROPOSED") // PROPOSED | ACCEPTED | COMPLETED | CANCELLED
+  notes     String?
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  items TreatmentPlanItem[]
+
+  @@index([patientId])
+}
+
+model TreatmentPlanItem {
+  id          Int           @id @default(autoincrement())
+  planId      Int
+  plan        TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  procedureId Int
+  procedure   Procedure     @relation(fields: [procedureId], references: [id])
+  toothRefs   String?
+  phase       Int           @default(1)
+  cost        Float         @default(0)
+  notes       String?
+}
+
+// Dental lab case tracking (crowns, bridges, dentures, aligners sent out).
+model LabWork {
+  id          Int        @id @default(autoincrement())
+  patientId   Int
+  patient     Patient    @relation(fields: [patientId], references: [id])
+  treatmentId Int?
+  treatment   Treatment? @relation(fields: [treatmentId], references: [id])
+  labName     String
+  workType    String     @default("CROWN") // CROWN | BRIDGE | DENTURE | ALIGNER | IMPLANT_PART | OTHER
+  toothRefs   String?
+  shade       String?
+  sentAt      DateTime   @default(now())
+  dueAt       DateTime?
+  receivedAt  DateTime?
+  status      String     @default("SENT") // SENT | RECEIVED | FITTED | REDO | CANCELLED
+  cost        Float      @default(0)
+  notes       String?
+
+  @@index([patientId])
+  @@index([status])
+}
+
+// Consumables/materials stock. Quantity is derived-adjustable via StockTxn
+// so every change is attributable.
+model InventoryItem {
+  id           Int       @id @default(autoincrement())
+  name         String    @unique
+  category     String    @default("CONSUMABLE") // CONSUMABLE | MEDICINE | INSTRUMENT | LAB_MATERIAL | OTHER
+  unit         String    @default("pcs")
+  stockQty     Float     @default(0)
+  reorderLevel Float     @default(0)
+  costPerUnit  Float     @default(0)
+  expiryDate   DateTime?
+  active       Boolean   @default(true)
+
+  txns StockTxn[]
+}
+
+model StockTxn {
+  id          Int           @id @default(autoincrement())
+  itemId      Int
+  item        InventoryItem @relation(fields: [itemId], references: [id])
+  delta       Float // positive = received, negative = consumed
+  reason      String        @default("ADJUST") // RECEIVE | CONSUME | ADJUST | EXPIRED
+  note        String?
+  createdById Int?
+  createdBy   User?         @relation(fields: [createdById], references: [id])
+  createdAt   DateTime      @default(now())
+
+  @@index([itemId])
+}
+
+// Clinic operating expenses — pairs with payments for profit & loss reporting.
+model Expense {
+  id          Int      @id @default(autoincrement())
+  date        DateTime @default(now())
+  category    String   @default("OTHER") // RENT | SALARY | LAB | MATERIALS | EQUIPMENT | UTILITIES | MARKETING | OTHER
+  description String
+  amount      Float
+  method      String   @default("CASH") // CASH | CARD | UPI | BANK | OTHER
+  createdById Int?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
+model Diagnosis {
+  id           Int      @id @default(autoincrement())
+  patientId    Int
+  patient      Patient  @relation(fields: [patientId], references: [id])
+  doctorId     Int?
+  doctor       User?    @relation(fields: [doctorId], references: [id])
+  symptoms     String?
+  observations String?
+  diagnosis    String
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Appointment {
+  id        Int      @id @default(autoincrement())
+  patientId Int
+  patient   Patient  @relation(fields: [patientId], references: [id])
+  doctorId  Int?
+  doctor    User?    @relation(fields: [doctorId], references: [id])
+  startsAt  DateTime
+  endsAt    DateTime
+  type      String   @default("CONSULTATION") // CONSULTATION | FOLLOW_UP | PROCEDURE | EMERGENCY
+  status    String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | WAITING | COMPLETED | CANCELLED | NO_SHOW
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([startsAt])
+  @@index([patientId])
+}
+
+model Invoice {
+  id          Int        @id @default(autoincrement())
+  number      String     @unique // INV-2026-0001
+  patientId   Int
+  patient     Patient    @relation(fields: [patientId], references: [id])
+  treatmentId Int?
+  treatment   Treatment? @relation(fields: [treatmentId], references: [id])
+  subtotal    Float      @default(0)
+  discount    Float      @default(0)
+  tax         Float      @default(0)
+  total       Float      @default(0)
+  status      String     @default("OPEN") // OPEN | PARTIAL | PAID | VOID
+  notes       String?
+  createdAt   DateTime   @default(now())
+
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@index([patientId])
+}
+
+model InvoiceItem {
+  id          Int     @id @default(autoincrement())
+  invoiceId   Int
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  qty         Int     @default(1)
+  unitPrice   Float   @default(0)
+  amount      Float   @default(0)
+}
+
+model Payment {
+  id        Int      @id @default(autoincrement())
+  patientId Int
+  patient   Patient  @relation(fields: [patientId], references: [id])
+  invoiceId Int?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
+  amount    Float
+  method    String   @default("CASH") // CASH | CARD | UPI | BANK | OTHER
+  reference String?
+  notes     String?
+  paidAt    DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Document {
+  id           Int      @id @default(autoincrement())
+  patientId    Int
+  patient      Patient  @relation(fields: [patientId], references: [id])
+  category     String   @default("XRAY") // XRAY | PRESCRIPTION | SCAN | LAB_REPORT | INSURANCE | OTHER
+  filename     String // original filename
+  storedPath   String // relative path under UPLOAD_DIR (storage abstraction: swap for S3 key later)
+  mimeType     String
+  size         Int      @default(0)
+  notes        String?
+  uploadedById Int?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([patientId])
+}
+
+model Prescription {
+  id        Int      @id @default(autoincrement())
+  patientId Int
+  patient   Patient  @relation(fields: [patientId], references: [id])
+  doctorId  Int?
+  doctor    User?    @relation(fields: [doctorId], references: [id])
+  content   String   @default("{}") // JSON: { medicines: [{name,dose,frequency,duration,notes}], advice }
+  createdAt DateTime @default(now())
+
+  @@index([patientId])
+}
+
+// Follow-up engine: created automatically when a treatment with a defined
+// flow completes, or manually by the doctor.
+model FollowUp {
+  id                Int        @id @default(autoincrement())
+  patientId         Int
+  patient           Patient    @relation(fields: [patientId], references: [id])
+  procedureId       Int?
+  procedure         Procedure? @relation(fields: [procedureId], references: [id])
+  sourceTreatmentId Int?
+  sourceTreatment   Treatment? @relation(fields: [sourceTreatmentId], references: [id])
+  dueDate           DateTime
+  status            String     @default("PENDING") // PENDING | BOOKED | DONE | DISMISSED
+  note              String?
+  createdAt         DateTime   @default(now())
+
+  @@index([dueDate])
+  @@index([patientId])
+}
+
+// Outbound/inbound communication log. Providers (console/WhatsApp/SMS) are
+// pluggable; every message is stored for the dashboard and future AI use.
+model Message {
+  id          Int       @id @default(autoincrement())
+  patientId   Int?
+  patient     Patient?  @relation(fields: [patientId], references: [id])
+  channel     String    @default("WHATSAPP") // WHATSAPP | SMS | EMAIL
+  kind        String    @default("GENERAL") // REMINDER | FOLLOW_UP | QUESTIONNAIRE | RECOMMENDATION | RECALL | BIRTHDAY | RISK_CONFIRM | GENERAL
+  to          String
+  body        String
+  status      String    @default("QUEUED") // QUEUED | SENT | FAILED
+  response    String? // stored patient reply (YES / NO / RESCHEDULE / 1/2/3)
+  refType     String? // APPOINTMENT | FOLLOWUP | TREATMENT — what this message is about
+  refId       Int?
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([patientId])
+  @@index([status])
+}
+
+// Append-only chronological event stream per patient. Powers the timeline UI
+// and is the substrate for future AI summaries/recall campaigns.
+model TimelineEvent {
+  id        Int      @id @default(autoincrement())
+  patientId Int
+  patient   Patient  @relation(fields: [patientId], references: [id])
+  type      String // APPOINTMENT | CONSULTATION | DIAGNOSIS | TREATMENT | PAYMENT | INVOICE | DOCUMENT | PRESCRIPTION | MESSAGE | FOLLOW_UP | NOTE
+  title     String
+  detail    String?
+  refType   String?
+  refId     Int?
+  createdAt DateTime @default(now())
+
+  @@index([patientId, createdAt])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String // CREATE | UPDATE | DELETE | LOGIN | BACKUP | ...
+  entity    String
+  entityId  Int?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

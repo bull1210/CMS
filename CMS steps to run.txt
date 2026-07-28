@@ -1,0 +1,20 @@
+A developer just unzips and runs:
+  
+What you need on the machine
+
+  1. Node.js (includes npm) — this is the engine that runs both the server and the client. Install the
+  LTS version from nodejs.org. This is the only "real" install; everything else is automatic.
+
+  Steps after unzipping
+  
+  cd CMS
+  npm run setup                 # installs deps, creates DB, seeds users + procedures
+  cd server; npm run dev        # API :4000
+  cd client; npm run dev        # web app :5173  (second terminal)
+
+  Open http://localhost:5173 and log in (doctor@clinic.local / doctor123).
+
+  The QUICKSTART.md now documents the three roles and demo logins:
+  - Doctor — doctor@clinic.local / doctor123 (full access)
+  - Assistant — assistant@clinic.local / assistant123 (front-desk screens)
+  - Admin — admin@clinic.local / admin123 (Settings only)

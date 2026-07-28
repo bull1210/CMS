@@ -1,0 +1,11 @@
+{
+  "name": "cms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Clinic Management System - run `npm run dev` in server/ and client/",
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "setup": "npm --prefix server install && npm --prefix client install && npm --prefix server run db:push && npm --prefix server run db:seed"
+  }
+}
