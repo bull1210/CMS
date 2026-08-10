@@ -22,7 +22,8 @@ model User {
 
   treatments     Treatment[]
   diagnoses      Diagnosis[]
-  appointments   Appointment[]
+  appointments   Appointment[] @relation("DoctorAppointments")
+  createdAppointments Appointment[] @relation("CreatedAppointments")
   documents      Document[]
   prescriptions  Prescription[]
   auditLogs      AuditLog[]
@@ -243,11 +244,13 @@ model Diagnosis {
 
 model Appointment {
   id        Int      @id @default(autoincrement())
-  patientId Int
-  patient   Patient  @relation(fields: [patientId], references: [id])
-  doctorId  Int?
-  doctor    User?    @relation(fields: [doctorId], references: [id])
-  startsAt  DateTime
+  patientId   Int
+  patient     Patient  @relation(fields: [patientId], references: [id])
+  doctorId    Int?
+  doctor      User?    @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  createdById Int?
+  createdBy   User?    @relation("CreatedAppointments", fields: [createdById], references: [id])
+  startsAt    DateTime
   endsAt    DateTime
   type      String   @default("CONSULTATION") // CONSULTATION | FOLLOW_UP | PROCEDURE | EMERGENCY
   status    String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | WAITING | COMPLETED | CANCELLED | NO_SHOW

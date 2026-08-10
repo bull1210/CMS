@@ -48,8 +48,11 @@ export async function api<T = unknown>(
 
   if (res.status === 401) {
     clearAuth();
-    if (!location.pathname.startsWith('/login')) location.href = '/login';
-    throw new ApiError(401, 'Session expired');
+    if (!location.pathname.startsWith('/login')) {
+      location.href = '/login';
+      throw new ApiError(401, 'Session expired');
+    }
+    // If we're on /login, let it fall through to read the actual error from the server.
   }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;

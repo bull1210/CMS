@@ -1,4 +1,4 @@
-﻿import { ReactNode, createContext, useContext } from 'react';
+import { ReactNode, createContext, useContext, useState } from 'react';
 import { AlertTriangle, Check, HelpCircle, X, type LucideIcon } from 'lucide-react';
 import { SECTIONS, Section, TONE_CLASSES, statusLabel, statusTone } from '../theme';
 
@@ -61,6 +61,8 @@ export function Card({
   children,
   className = '',
   tone,
+  collapsible,
+  defaultExpanded = false,
 }: {
   title?: ReactNode;
   hint?: string;
@@ -69,15 +71,26 @@ export function Card({
   children: ReactNode;
   className?: string;
   tone?: 'good' | 'warn' | 'bad';
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
 }) {
   const s = useSection();
+  const [expanded, setExpanded] = useState(collapsible ? defaultExpanded : true);
   const accent = tone === 'bad' ? 'bg-rose-500' : tone === 'warn' ? 'bg-amber-500' : tone === 'good' ? 'bg-emerald-500' : s.accent;
   const chip = tone === 'bad' ? 'bg-rose-100 text-rose-700' : tone === 'warn' ? 'bg-amber-100 text-amber-700' : tone === 'good' ? 'bg-emerald-100 text-emerald-700' : s.chip;
   return (
     <div className={`relative bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow overflow-hidden animate-rise ${className}`}>
       <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${accent}`} aria-hidden />
       {(title || action) && (
-        <div className="flex items-start justify-between gap-3 pl-5 pr-3 py-2.5 border-b border-slate-100">
+        <div 
+          className={`flex items-start justify-between gap-3 pl-5 pr-3 py-2.5 border-b border-slate-100 transition-colors ${collapsible ? 'cursor-pointer hover:bg-slate-50' : ''}`}
+          onClick={(e) => {
+            // Prevent toggling if clicked on an action button
+            if (collapsible && !(e.target as HTMLElement).closest('button')) {
+              setExpanded(!expanded);
+            }
+          }}
+        >
           <div className="flex items-center gap-2 min-w-0">
             {Icon && (
               <span className={`shrink-0 rounded-lg p-1.5 ${chip}`}>
@@ -85,14 +98,21 @@ export function Card({
               </span>
             )}
             <div className="min-w-0">
-              <h3 className="font-bold text-slate-800 leading-tight">{title}</h3>
+              <h3 className="font-bold text-slate-800 leading-tight flex items-center gap-2">
+                {title}
+                {collapsible && (
+                  <span className="text-slate-400 text-[10px] uppercase tracking-wider">{expanded ? 'Hide' : 'Show'}</span>
+                )}
+              </h3>
               {hint && <p className="text-xs text-slate-500 leading-snug">{hint}</p>}
             </div>
           </div>
           {action && <div className="shrink-0">{action}</div>}
         </div>
       )}
-      <div className="pl-5 pr-3 py-2.5">{children}</div>
+      {(!collapsible || expanded) && (
+        <div className="pl-5 pr-3 py-2.5">{children}</div>
+      )}
     </div>
   );
 }

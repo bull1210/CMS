@@ -27,7 +27,7 @@ export class AuthService {
       throw new UnauthorizedException(`Too many failed attempts — try again in ${mins} min`);
     }
 
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findUnique({ where: { email: key } });
     if (!user || !user.active || !(await bcrypt.compare(password, user.passwordHash))) {
       const next = { count: (entry?.count ?? 0) + 1, lockedUntil: 0 };
       if (next.count >= MAX_FAILS) {

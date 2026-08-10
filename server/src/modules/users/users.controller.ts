@@ -16,7 +16,6 @@ import { AuthUser, CurrentUser, ROLES, Roles } from '../../core/auth.guard';
 
 const publicUser = { id: true, name: true, email: true, role: true, active: true, createdAt: true };
 
-@Roles('ADMIN')
 @Controller('users')
 export class UsersController {
   constructor(
@@ -29,6 +28,7 @@ export class UsersController {
     return this.prisma.user.findMany({ select: publicUser, orderBy: { name: 'asc' } });
   }
 
+  @Roles('ADMIN')
   @Post()
   async create(
     @CurrentUser() actor: AuthUser,
@@ -51,6 +51,7 @@ export class UsersController {
     return user;
   }
 
+  @Roles('ADMIN')
   @Put(':id')
   async update(
     @CurrentUser() actor: AuthUser,
@@ -70,6 +71,7 @@ export class UsersController {
     return user;
   }
 
+  @Roles('ADMIN')
   @Delete(':id')
   async deactivate(@CurrentUser() actor: AuthUser, @Param('id', ParseIntPipe) id: number) {
     if (actor.sub === id) throw new BadRequestException('Cannot deactivate yourself');
