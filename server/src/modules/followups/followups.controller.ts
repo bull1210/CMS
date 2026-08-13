@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma.service';
 import { TimelineService } from '../../core/timeline.service';
-import { Roles } from '../../core/auth.guard';
+import { AuthUser, CurrentUser, Roles } from '../../core/auth.guard';
 
 const STATUSES = ['PENDING', 'BOOKED', 'DONE', 'DISMISSED'];
 
@@ -32,6 +32,7 @@ export class FollowupsController {
   @Roles('DOCTOR', 'ADMIN')
   @Post()
   async create(
+    @CurrentUser() user: AuthUser,
     @Body() body: { patientId: number; procedureId?: number; dueDate: string; note?: string },
   ) {
     if (!body?.patientId || !body?.dueDate) {
@@ -46,10 +47,13 @@ export class FollowupsController {
       },
       include: { procedure: true },
     });
+    const userRow = await this.prisma.user.findUnique({ where: { id: user.sub }, select: { name: true } });
+    const creatorName = userRow?.name || `Assistant`;
+
     await this.timeline.add(
       body.patientId,
       'FOLLOW_UP',
-      `Follow-up scheduled${fu.procedure ? `: ${fu.procedure.name}` : ''}`,
+      `Follow-up scheduled${fu.procedure ? `: ${fu.procedure.name}` : ''} by ${creatorName}`,
       body.note,
       'FollowUp',
       fu.id,
@@ -58,17 +62,35 @@ export class FollowupsController {
   }
 
   @Put(':id/status')
-  async setStatus(@Param('id', ParseIntPipe) id: number, @Body() body: { status: string }) {
+  async setStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number, 
+    @Body() body: { status: string; resolution?: string }
+  ) {
     if (!STATUSES.includes(body?.status)) throw new BadRequestException('Invalid status');
+    
+    const existing = await this.prisma.followUp.findUnique({ where: { id } });
+    if (!existing) throw new BadRequestException('Followup not found');
+
+    let newNote = existing.note;
+    if (body.resolution) {
+      const resText = `Resolved: ${body.resolution}`;
+      newNote = newNote ? `${newNote}\n${resText}` : resText;
+    }
+
     const fu = await this.prisma.followUp.update({
       where: { id },
-      data: { status: body.status },
+      data: { status: body.status, note: newNote },
     });
+    
+    const userRow = await this.prisma.user.findUnique({ where: { id: user.sub }, select: { name: true } });
+    const updaterName = userRow?.name || `Assistant`;
+
     await this.timeline.add(
       fu.patientId,
       'FOLLOW_UP',
-      `Follow-up ${body.status.toLowerCase()}`,
-      undefined,
+      `Follow-up ${body.status.toLowerCase()} by ${updaterName}`,
+      body.resolution || undefined,
       'FollowUp',
       id,
     );

@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma.service';
+import { AuthUser, CurrentUser } from '../../core/auth.guard';
 
 function startOfDay(d = new Date()) {
   const x = new Date(d);
@@ -12,12 +13,14 @@ export class DashboardController {
   constructor(private prisma: PrismaService) {}
 
   @Get()
-  async summary() {
+  async summary(@CurrentUser() user: AuthUser) {
     const now = new Date();
     const today = startOfDay();
     const tomorrow = new Date(today.getTime() + 86400_000);
     const weekStart = new Date(today.getTime() - ((today.getDay() + 6) % 7) * 86400_000); // Monday
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const docFilter = user.role === 'DOCTOR' ? { doctorId: user.sub } : {};
 
     const [
       todaysAppointments,
@@ -35,7 +38,7 @@ export class DashboardController {
       lowStock,
     ] = await Promise.all([
       this.prisma.appointment.findMany({
-        where: { startsAt: { gte: today, lt: tomorrow } },
+        where: { startsAt: { gte: today, lt: tomorrow }, ...docFilter },
         include: { patient: { select: { id: true, name: true, code: true, phone: true } } },
         orderBy: { startsAt: 'asc' },
       }),
@@ -49,7 +52,7 @@ export class DashboardController {
         take: 50,
       }),
       this.prisma.treatment.findMany({
-        where: { status: { in: ['PLANNED', 'IN_PROGRESS'] } },
+        where: { status: { in: ['PLANNED', 'IN_PROGRESS'] }, ...docFilter },
         include: {
           patient: { select: { id: true, name: true, code: true } },
           procedure: { select: { id: true, name: true } },

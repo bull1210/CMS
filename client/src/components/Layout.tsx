@@ -141,17 +141,34 @@ export default function Layout() {
   const ROLE_LABELS: Record<string, string> = { DOCTOR: 'Doctor', ADMIN: 'Administrator', ASSISTANT: 'Assistant' };
   const roleLabel = ROLE_LABELS[user?.role ?? ''] ?? user?.role;
 
+  const { data: settings } = useQuery<Record<string, string>>({
+    queryKey: ['settings'],
+    queryFn: () => api('/settings'),
+  });
+
+  useEffect(() => {
+    if (settings?.['clinic.theme'] && settings['clinic.theme'] !== 'default') {
+      document.documentElement.dataset.theme = settings['clinic.theme'];
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }, [settings?.['clinic.theme']]);
+
   return (
     <SectionProvider value={section}>
       <div className="min-h-screen flex">
         <aside className="w-64 bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex flex-col fixed inset-y-0 no-print shadow-2xl">
           <Link to="/" className="flex items-center gap-3 px-5 py-6 text-white hover:opacity-90 transition">
-            <div className="bg-gradient-to-br from-indigo-400 to-violet-500 p-2.5 rounded-xl shadow-lg">
-              <Stethoscope size={20} />
-            </div>
+            {settings?.['clinic.logo'] ? (
+              <img src={settings['clinic.logo']} alt="Clinic Logo" className="w-10 h-10 rounded-xl object-cover bg-white shadow-lg" />
+            ) : (
+              <div className="bg-gradient-to-br from-indigo-400 to-violet-500 p-2.5 rounded-xl shadow-lg">
+                <Stethoscope size={20} />
+              </div>
+            )}
             <div>
-              <div className="font-bold text-base leading-tight">Smile Dental</div>
-              <div className="text-[11px] text-slate-400">Clinic management</div>
+              <div className="font-bold text-base leading-tight">{settings?.['clinic.name'] || 'Smile Dental'}</div>
+              <div className="text-[11px] text-slate-400">{settings?.['clinic.tagline'] || 'Clinic management'}</div>
             </div>
           </Link>
 
@@ -214,7 +231,7 @@ export default function Layout() {
 
         <div className="flex-1 ml-64 min-w-0">
           <header className="bg-white/80 backdrop-blur border-b border-slate-200 px-6 py-3 flex items-center gap-4 sticky top-0 z-30 no-print">
-            <GlobalSearch />
+            {user?.role !== 'ADMIN' && <GlobalSearch />}
           </header>
           <main className="px-5 py-4">
             <Outlet />

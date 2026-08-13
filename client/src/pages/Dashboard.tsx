@@ -1,9 +1,11 @@
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   CalendarDays,
   CalendarPlus,
+  CheckCircle2,
   FlaskConical,
   Package,
   PhoneCall,
@@ -11,6 +13,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { api, fmtDate, fmtTime } from '../api';
+import { isBefore, startOfDay } from 'date-fns';
 import { Badge, Card, Empty, Spinner, Stat } from '../components/ui';
 import { statusLabel } from '../theme';
 
@@ -98,6 +101,15 @@ function greeting() {
 
 export default function Dashboard() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const [resText, setResText] = useState('');
+  const setFollowUpStatus = useMutation({
+    mutationFn: async ({ id, status, resolution }: { id: number; status: string; resolution?: string }) => {
+      await api(`/followups/${id}/status`, { method: 'PUT', body: { status, resolution } });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard'] }),
+  });
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: () => api('/dashboard'),
@@ -118,6 +130,11 @@ export default function Dashboard() {
   if (isLoading || !data) return <Spinner label="Getting today ready…" />;
 
   const nowInClinic = data.appointments.all.filter((a) => a.status === 'WAITING').length;
+  
+  const urgentOrOverdueCount = data.followUpsDue.filter((f) => {
+    const diffHours = (new Date(f.dueDate).getTime() - new Date().getTime()) / 3600000;
+    return diffHours <= 48;
+  }).length;
 
   return (
     <div className="space-y-4">
@@ -158,14 +175,14 @@ export default function Dashboard() {
           value={data.appointments.total}
           sub={nowInClinic > 0 ? `${nowInClinic} in clinic now` : 'Booked for today'}
           icon={CalendarDays}
-          tone="info"
+          tone="default"
         />
         <Stat
           label="Follow-up calls due"
           value={data.followUpsDue.length}
-          sub={data.alerts.overdueFollowUps > 0 ? `${data.alerts.overdueFollowUps} overdue` : 'Patients to check on'}
+          sub={urgentOrOverdueCount > 0 ? `${urgentOrOverdueCount} need attention` : 'Patients to check on'}
           icon={PhoneCall}
-          tone={data.followUpsDue.length > 0 ? 'warn' : 'default'}
+          tone={urgentOrOverdueCount > 0 ? 'warn' : 'default'}
         />
         <Stat
           label="Treatments in progress"
@@ -257,27 +274,106 @@ export default function Dashboard() {
             />
           ) : (
             <div className="space-y-0.5">
-              {data.followUpsDue.map((f) => {
-                const overdue = new Date(f.dueDate) < new Date();
-                return (
+              {(() => {
+                const now = new Date().getTime();
+                return [...data.followUpsDue]
+                  .map((f) => {
+                    const diffHours = (new Date(f.dueDate).getTime() - now) / 3600000;
+                    let urgency = 'normal';
+                    if (diffHours < 24) urgency = 'overdue';
+                    else if (diffHours <= 48) urgency = 'urgent';
+                    return { ...f, diffHours, urgency };
+                  })
+                  .sort((a, b) => a.diffHours - b.diffHours)
+                  .map((f) => (
                   <div
                     key={f.id}
-                    className="flex items-center gap-3 py-1.5 px-2 -mx-2 rounded-lg hover:bg-slate-50 transition border-b border-slate-50 last:border-0"
+                    className="group flex flex-col py-1.5 px-2 -mx-2 rounded-lg hover:bg-slate-50 transition border-b border-slate-50 last:border-0"
                   >
-                    <span className={`text-sm w-20 shrink-0 font-bold ${overdue ? 'text-rose-600' : 'text-slate-600'}`}>
-                      {fmtDate(f.dueDate)}
-                    </span>
-                    <Link
-                      to={`/patients/${f.patient.id}`}
-                      className="flex-1 text-sm text-slate-800 hover:text-indigo-600 font-semibold truncate"
-                    >
-                      {f.patient.name}
-                    </Link>
-                    <span className="text-xs text-slate-500 truncate max-w-[40%]">{f.procedure?.name ?? f.note}</span>
-                    {overdue && <Badge value="OVERDUE" />}
+                    <div className="flex items-center gap-3 w-full">
+                      <span
+                        className={`text-sm w-20 shrink-0 font-bold ${
+                          f.urgency === 'overdue' ? 'text-rose-600' : f.urgency === 'urgent' ? 'text-orange-600' : 'text-slate-600'
+                        }`}
+                      >
+                        {fmtDate(f.dueDate)}
+                      </span>
+                      <Link
+                        to={`/patients/${f.patient.id}`}
+                        className="flex-1 text-sm text-slate-800 hover:text-indigo-600 font-semibold truncate"
+                      >
+                        {f.patient.name}
+                      </Link>
+                      <span className="text-xs text-slate-500 truncate max-w-[40%]">
+                        {f.procedure?.name ?? (f.note?.startsWith('RESCHEDULE:') ? f.note.split('. Original')[0] : f.note)}
+                      </span>
+                      
+                      {f.urgency === 'overdue' && <Badge value="OVERDUE" />}
+                      {f.urgency === 'urgent' && <span className="text-[10px] font-bold text-orange-600 bg-orange-100 px-1.5 py-0.5 rounded">URGENT</span>}
+
+                      {f.note?.startsWith('RESCHEDULE:') && (
+                        <button
+                          onClick={() => {
+                            const docMatch = f.note?.match(/Doctor ID: (\d+)/);
+                            const rescheduleDocId = docMatch && docMatch[1] ? parseInt(docMatch[1], 10) : undefined;
+                            navigate(`/patients/${f.patient.id}`, { state: { openReschedule: f.id, rescheduleDocId } });
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-slate-200 rounded text-indigo-600 hover:text-indigo-800 transition ml-auto text-[10px] font-bold uppercase tracking-wide"
+                          title="Reschedule Appointment"
+                        >
+                          Reschedule
+                        </button>
+                      )}
+                      
+                      <button
+                        onClick={() => {
+                          setResolvingId(f.id);
+                          setResText('');
+                        }}
+                        className={`opacity-0 group-hover:opacity-100 p-1.5 hover:bg-slate-200 rounded text-slate-400 hover:text-emerald-600 transition ${!f.note?.startsWith('RESCHEDULE:') ? 'ml-auto' : ''}`}
+                        title={f.note?.startsWith('RESCHEDULE:') ? "Close without rescheduling" : "Mark as done"}
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {resolvingId === f.id && (
+                      <div className="mt-2 pl-[5.5rem] pr-2 flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                        <input
+                          type="text"
+                          placeholder="Resolution note (e.g. rescheduled to 14th Aug)..."
+                          className="flex-1 text-sm border-b border-slate-300 focus:border-indigo-500 bg-transparent py-1 outline-none transition-colors"
+                          autoFocus
+                          value={resText}
+                          onChange={(e) => setResText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              setFollowUpStatus.mutate({ id: f.id, status: 'DONE', resolution: resText });
+                              setResolvingId(null);
+                            } else if (e.key === 'Escape') {
+                              setResolvingId(null);
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            setFollowUpStatus.mutate({ id: f.id, status: 'DONE', resolution: resText });
+                            setResolvingId(null);
+                          }}
+                          className="text-xs font-semibold bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setResolvingId(null)}
+                          className="text-xs font-semibold text-slate-500 hover:text-slate-700 px-2 py-1 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
+                ));
+              })()}
             </div>
           )}
         </Card>

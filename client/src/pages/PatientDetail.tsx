@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   BookOpen,
@@ -1249,6 +1249,8 @@ const TAB_HINTS: Record<(typeof TABS)[number], string> = {
 
 export default function PatientDetail() {
   const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const patientId = Number(id);
   const qc = useQueryClient();
   const [tab, setTab] = useState<(typeof TABS)[number]>('Timeline');
@@ -1256,7 +1258,11 @@ export default function PatientDetail() {
   // Assistants handle front-desk work only — the clinical record (tooth map,
   // diagnoses/treatments, treatment plans & lab) is for the doctor.
   const visibleTabs = TABS.filter((t) => isClinical() || !CLINICAL_TABS.includes(t));
-  const [booking, setBooking] = useState<{ followUpId?: number; procedureName?: string } | null>(null);
+  const [booking, setBooking] = useState<{ followUpId?: number; procedureName?: string; defaultDoctorId?: number } | null>(
+    location.state?.openReschedule ? { followUpId: location.state.openReschedule, defaultDoctorId: location.state.rescheduleDocId } : null
+  );
+  const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const [resText, setResText] = useState('');
 
   const { data: patient, isLoading } = useQuery<Patient>({
     queryKey: ['patient', patientId],
@@ -1266,6 +1272,14 @@ export default function PatientDetail() {
     queryKey: ['patient-summary', patientId],
     queryFn: () => api(`/patients/${patientId}/summary`),
   });
+
+  const setFollowUpStatus = useMutation({
+    mutationFn: async ({ id, status, resolution }: { id: number; status: string; resolution?: string }) => {
+      await api(`/followups/${id}/status`, { method: 'PUT', body: { status, resolution } });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['patient-summary', patientId] }),
+  });
+
 
   if (isLoading || !patient) return <Spinner />;
 
@@ -1358,15 +1372,54 @@ export default function PatientDetail() {
           <div className="mt-4 bg-white/95 rounded-xl px-4 py-3 flex flex-wrap items-center gap-3 shadow-sm">
             <span className="text-sm font-bold text-amber-800">What this patient needs next:</span>
             {summary.pendingFollowUps.map((f) => (
-              <span key={f.id} className="text-sm text-slate-700">
-                {f.procedure?.name ?? 'A review'}{' '}
-                <span className="text-slate-500">(due {fmtDate(f.dueDate)})</span>
+              <span key={f.id} className="text-sm text-slate-700 flex items-center gap-2">
+                <span>
+                  {f.procedure?.name ?? 'A review'} <span className="text-slate-500">(due {fmtDate(f.dueDate)})</span>
+                </span>
                 <button
-                  className="ml-2 text-white bg-blue-600 hover:bg-blue-700 font-semibold px-2.5 py-1 rounded-lg text-xs transition"
+                  className="text-white bg-blue-600 hover:bg-blue-700 font-semibold px-2.5 py-1 rounded-lg text-xs transition"
                   onClick={() => setBooking({ followUpId: f.id, procedureName: f.procedure?.name })}
                 >
                   Book it now
                 </button>
+                <button
+                  onClick={() => {
+                    setResolvingId(f.id);
+                    setResText('');
+                  }}
+                  className="text-slate-500 hover:text-emerald-600 font-semibold px-2 py-1 rounded-lg text-xs transition bg-slate-100 hover:bg-emerald-50"
+                  title="Mark as done"
+                >
+                  Mark done
+                </button>
+                {resolvingId === f.id && (
+                  <div className="flex items-center gap-2 ml-2 bg-slate-50 rounded px-2 py-1 border border-slate-200">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Resolution note..."
+                      className="text-xs bg-transparent outline-none w-48 border-b border-slate-300 focus:border-indigo-500 transition-colors py-0.5"
+                      value={resText}
+                      onChange={e => setResText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          setFollowUpStatus.mutate({ id: f.id, status: 'DONE', resolution: resText });
+                          setResolvingId(null);
+                        } else if (e.key === 'Escape') setResolvingId(null);
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        setFollowUpStatus.mutate({ id: f.id, status: 'DONE', resolution: resText });
+                        setResolvingId(null);
+                      }}
+                      className="text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded hover:bg-indigo-700 transition"
+                    >
+                      Save
+                    </button>
+                    <button onClick={() => setResolvingId(null)} className="text-[10px] font-bold text-slate-500 hover:text-slate-700">Cancel</button>
+                  </div>
+                )}
               </span>
             ))}
           </div>
@@ -1416,9 +1469,17 @@ export default function PatientDetail() {
       {booking && (
         <BookAppointmentModal
           patientId={patientId}
-          followUpId={booking.followUpId}
-          procedureName={booking.procedureName}
-          onClose={() => setBooking(null)}
+          patientName={patient?.name}
+          followUpId={typeof booking === 'object' ? booking.followUpId : undefined}
+          procedureName={typeof booking === 'object' ? booking.procedureName : undefined}
+          defaultDoctorId={typeof booking === 'object' ? booking.defaultDoctorId : undefined}
+          onClose={() => {
+            if (location.state?.openReschedule) {
+              navigate(`/patients/${patientId}`, { replace: true });
+            } else {
+              setBooking(null);
+            }
+          }}
         />
       )}
     </div>
@@ -1427,16 +1488,24 @@ export default function PatientDetail() {
 
 export function BookAppointmentModal({
   patientId,
+  patientName,
   followUpId,
   procedureName,
+  defaultDoctorId,
   onClose,
 }: {
   patientId: number;
+  patientName?: string;
   followUpId?: number;
   procedureName?: string;
+  defaultDoctorId?: number;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const user = getUser();
+  const [doctorId, setDoctorId] = useState<number | ''>(defaultDoctorId || (user?.role === 'DOCTOR' ? user.id : ''));
+  const { data: users } = useQuery<{ id: number; name: string; role: string; active: boolean }[]>({ queryKey: ['users'], queryFn: () => api('/users') });
+  const doctors = users?.filter(u => u.role === 'DOCTOR' && u.active) || [];
   const [form, setForm] = useState({
     date: new Date(Date.now() + 86400_000).toISOString().slice(0, 10),
     time: '10:00',
@@ -1444,20 +1513,76 @@ export function BookAppointmentModal({
     type: followUpId ? 'FOLLOW_UP' : 'CONSULTATION',
     notes: procedureName ?? '',
   });
+  const { data: followUps } = useQuery<any[]>({ 
+    queryKey: ['followups', patientId], 
+    queryFn: () => api(`/followups?patientId=${patientId}&status=PENDING`) 
+  });
+  const [mismatchPrompt, setMismatchPrompt] = useState<{task: any, oldDoc: string, newDoc: string} | null>(null);
+  
+  const { data: settings } = useQuery<Record<string, string>>({ queryKey: ['settings'], queryFn: () => api('/settings') });
+  const intervalStr = settings?.['appointments.interval'];
+  const interval = intervalStr ? parseInt(intervalStr, 10) : 5;
+  const safeInterval = isNaN(interval) || interval <= 0 ? 5 : interval;
+  
+  const [ignoreWH, setIgnoreWH] = useState(false);
+
+  const wh = useMemo(() => {
+    try { return settings?.['clinic.workingHours'] ? JSON.parse(settings['clinic.workingHours']) : null; }
+    catch { return null; }
+  }, [settings?.['clinic.workingHours']]);
+
+  const closures = useMemo(() => {
+    try { return settings?.['clinic.closures'] ? JSON.parse(settings['clinic.closures']) : {}; }
+    catch { return {}; }
+  }, [settings?.['clinic.closures']]);
+
+  const doctorClosures = useMemo(() => {
+    try { return settings?.['doctor.closures'] ? JSON.parse(settings['doctor.closures']) : {}; }
+    catch { return {}; }
+  }, [settings?.['doctor.closures']]);
+
+  const timeOptions = useMemo(() => {
+    const opts = [];
+    const [y, m, d] = form.date.split('-').map(Number);
+    const dayOfWeek = new Date(y, m - 1, d).getDay();
+    const dayConf = wh?.[dayOfWeek];
+    const isExplicitClosure = !!closures[form.date] || (doctorId ? !!doctorClosures[doctorId]?.[form.date] : false);
+
+    for (let h = 0; h < 24; h++) {
+      for (let min = 0; min < 60; min += safeInterval) {
+        const timeStr = `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+        
+        if (isExplicitClosure) continue; // STRICTLY block explicit closures
+        
+        if (!ignoreWH) {
+          if (dayConf) {
+            if (dayConf.closed) continue;
+            const inMorn = timeStr >= dayConf.morning[0] && timeStr <= dayConf.morning[1];
+            const inEve = timeStr >= dayConf.evening[0] && timeStr <= dayConf.evening[1];
+            if (!inMorn && !inEve) continue;
+          }
+        }
+        opts.push(timeStr);
+      }
+    }
+    return opts;
+  }, [safeInterval, form.date, wh, closures, ignoreWH]);
   const startsAtIso = `${form.date}T${form.time}:00`;
-  const slot = useSlotChecks(startsAtIso, form.durationMin);
+  const slot = useSlotChecks(startsAtIso, form.durationMin, doctorId, patientId);
   const [error, setError] = useState('');
 
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (vars?: { closeMismatchFollowUpId?: number }) =>
       api('/appointments', {
         body: {
           patientId,
+          doctorId: Number(doctorId),
           startsAt: new Date(startsAtIso).toISOString(),
           durationMin: form.durationMin,
           type: form.type,
           notes: form.notes || undefined,
           followUpId,
+          closeMismatchFollowUpId: vars?.closeMismatchFollowUpId,
         },
       }),
     onSuccess: () => {
@@ -1467,14 +1592,66 @@ export function BookAppointmentModal({
     onError: (e) => setError(e.message),
   });
 
+  const handleBookClick = () => {
+    if (!followUpId && followUps?.length) {
+      const rescheduleTask = followUps.find(f => f.note?.includes('RESCHEDULE:'));
+      if (rescheduleTask) {
+        const match = rescheduleTask.note.match(/Doctor ID:\s*(\d+)/);
+        const originalDocId = match && match[1] ? parseInt(match[1], 10) : null;
+        
+        if (originalDocId && originalDocId !== Number(doctorId)) {
+          const oldDoc = doctors.find(d => d.id === originalDocId)?.name || `ID ${originalDocId}`;
+          const newDoc = doctors.find(d => d.id === Number(doctorId))?.name || `ID ${doctorId}`;
+          setMismatchPrompt({ task: rescheduleTask, oldDoc, newDoc });
+          return;
+        }
+      }
+    }
+    save.mutate({});
+  };
+
+  if (mismatchPrompt) {
+    return (
+      <Modal title="Pending Reschedule Task Detected" onClose={() => setMismatchPrompt(null)}>
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            This patient has a pending reschedule task with <strong>Dr. {mismatchPrompt.oldDoc}</strong>. 
+            You are booking this new appointment with <strong>Dr. {mismatchPrompt.newDoc}</strong>.
+          </p>
+          <p className="text-sm text-slate-600">
+            What would you like to do with the pending reschedule task?
+          </p>
+          {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-200">{error}</div>}
+          <div className="flex gap-3 pt-2">
+            <Button
+              className="flex-1"
+              variant="secondary"
+              onClick={() => save.mutate({})}
+              disabled={save.isPending}
+            >
+              Keep Task Pending
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => save.mutate({ closeMismatchFollowUpId: mismatchPrompt.task.id })}
+              disabled={save.isPending}
+            >
+              Close Task Automatically
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
-      title={procedureName ? `Book: ${procedureName}` : 'Book appointment'}
+      title={procedureName ? `Book: ${procedureName}` : `Book appointment${patientName ? ` for ${patientName}` : ''}`}
       onClose={onClose}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button onClick={handleBookClick} disabled={!doctorId || save.isPending}>
             {slot.clash || slot.inPast ? 'Book anyway' : 'Book'}
           </Button>
         </div>
@@ -1482,24 +1659,49 @@ export function BookAppointmentModal({
     >
       <div className="grid grid-cols-2 gap-3">
         <Field label="Date"><input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label="Time"><input type="time" className={inputCls} value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></Field>
+        <Field label="Time">
+          <select className={inputCls} value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })}>
+            {timeOptions.length > 0 ? (
+              timeOptions.map((t) => <option key={t} value={t}>{t}</option>)
+            ) : (
+              <option value="" disabled>No slots (Closed?)</option>
+            )}
+          </select>
+        </Field>
         <Field label="Duration (min)">
           <select className={inputCls} value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: Number(e.target.value) })}>
             {[15, 30, 45, 60, 90].map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </Field>
-        <Field label="What kind of visit?">
+        <Field label="Type">
           <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-            {[
-              ['CONSULTATION', 'Consultation — first look / check-up'],
-              ['FOLLOW_UP', 'Follow-up — checking on earlier treatment'],
-              ['PROCEDURE', 'Treatment — actual dental work'],
-              ['EMERGENCY', 'Emergency — urgent, in pain'],
-            ].map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            <option value="CONSULTATION">Consultation</option>
+            <option value="FOLLOW_UP">Follow-up</option>
+            <option value="PROCEDURE">Treatment</option>
+            <option value="EMERGENCY">Emergency</option>
           </select>
         </Field>
-        <Field label="Notes" className="col-span-2"><input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
       </div>
+
+      {user?.role !== 'DOCTOR' && (
+        <Field label="Which doctor?" required>
+          <select className={inputCls} value={doctorId} onChange={e => setDoctorId(e.target.value ? Number(e.target.value) : '')}>
+            <option value="" disabled>Select a doctor</option>
+            {doctors.map(d => (
+              <option key={d.id} value={d.id}>Dr. {d.name}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      <label className="flex items-center gap-2 text-sm text-slate-600 mt-3 mb-2 cursor-pointer">
+        <input type="checkbox" checked={ignoreWH} onChange={(e) => setIgnoreWH(e.target.checked)} />
+        Show all times (book outside working hours)
+      </label>
+
+      <Field label="Notes" hint="Optional">
+        <input className={inputCls} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="e.g. Needs X-ray" />
+      </Field>
       <SlotWarnings slot={slot} />
       {error && <Hint tone="warn">{error}</Hint>}
     </Modal>
@@ -1514,18 +1716,20 @@ interface SlotState {
 }
 
 /** Live-checks a proposed slot against the server for overlaps, plus past-date. */
-export function useSlotChecks(startsAtIso: string, durationMin: number, excludeId?: number): SlotState {
+export function useSlotChecks(startsAtIso: string, durationMin: number, doctorId?: number | '', patientId?: number, excludeId?: number): SlotState {
   const start = new Date(startsAtIso);
   const valid = !Number.isNaN(start.getTime());
   const inPast = valid && start.getTime() < Date.now();
 
   const { data } = useQuery<{ clash: SlotState['clash'] }>({
-    queryKey: ['appt-clash', startsAtIso, durationMin, excludeId],
-    queryFn: () =>
-      api(
-        `/appointments/clash?startsAt=${encodeURIComponent(start.toISOString())}` +
-          `&durationMin=${durationMin}${excludeId ? `&excludeId=${excludeId}` : ''}`,
-      ),
+    queryKey: ['appt-clash', startsAtIso, durationMin, doctorId, patientId, excludeId],
+    queryFn: () => {
+      const q = new URLSearchParams({ startsAt: startsAtIso, durationMin: durationMin.toString() });
+      if (doctorId) q.set('doctorId', doctorId.toString());
+      if (patientId) q.set('patientId', patientId.toString());
+      if (excludeId) q.set('excludeId', excludeId.toString());
+      return api(`/appointments/clash?${q.toString()}`);
+    },
     enabled: valid,
   });
 

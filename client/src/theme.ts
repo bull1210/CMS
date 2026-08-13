@@ -155,6 +155,7 @@ const STATUS_LABELS: Record<string, string> = {
   COMPLETED: 'Done',
   DONE: 'Done',
   CANCELLED: 'Cancelled',
+  RESCHEDULED: 'Moved to a new time',
   NO_SHOW: "Didn't come",
   PLANNED: 'Planned',
   IN_PROGRESS: 'Started',
@@ -192,7 +193,7 @@ const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | 'mute'> = {
   PROPOSED: 'warn', ORDERED: 'warn',
   NO_SHOW: 'bad', OPEN: 'bad', FAILED: 'bad', OVERDUE: 'bad', REJECTED: 'bad',
   SCHEDULED: 'info', PLANNED: 'info', BOOKED: 'info', IN_PROGRESS: 'info',
-  CANCELLED: 'mute', VOID: 'mute', DISMISSED: 'mute', ARCHIVED: 'mute',
+  CANCELLED: 'mute', RESCHEDULED: 'mute', VOID: 'mute', DISMISSED: 'mute', ARCHIVED: 'mute',
 };
 
 export const TONE_CLASSES = {

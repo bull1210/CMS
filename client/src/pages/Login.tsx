@@ -1,5 +1,6 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { api, setAuth, AuthUser } from '../api';
 import { Button, Field, inputCls } from '../components/ui';
 import { PoweredByAatmam } from '../components/Brand';
@@ -19,6 +20,19 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
+  const { data: settings } = useQuery<Record<string, string>>({
+    queryKey: ['settings_public'],
+    queryFn: () => api('/settings/public'),
+  });
+
+  useEffect(() => {
+    if (settings?.['clinic.theme'] && settings['clinic.theme'] !== 'default') {
+      document.documentElement.dataset.theme = settings['clinic.theme'];
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }, [settings?.['clinic.theme']]);
+
   async function signIn(e?: FormEvent, creds?: { email: string; password: string }) {
     e?.preventDefault();
     setBusy(true);
@@ -37,18 +51,21 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600 relative overflow-hidden">
-      {/* Soft light blooms so the background isn't a flat slab of colour. */}
-      <div className="absolute -top-24 -left-24 w-96 h-96 bg-white/10 rounded-full blur-3xl" aria-hidden />
-      <div className="absolute -bottom-32 -right-16 w-[28rem] h-[28rem] bg-sky-300/20 rounded-full blur-3xl" aria-hidden />
+    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 relative overflow-hidden">
+      {/* Professional top banner using the dynamic theme color */}
+      <div className="absolute top-0 left-0 w-full h-[45vh] bg-indigo-600 shadow-sm" aria-hidden />
 
       <div className="relative w-full max-w-md animate-rise">
-        <div className="text-center mb-6">
-          <div className="inline-flex bg-white/20 backdrop-blur rounded-2xl p-4 text-white shadow-lg mb-3">
-            <Stethoscope size={34} />
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Smile Dental</h1>
-          <p className="text-white/80 text-sm mt-1">Everything for your clinic, in one place</p>
+        <div className="text-center mb-8 flex flex-col items-center">
+          {settings?.['clinic.logo'] ? (
+            <img src={settings['clinic.logo']} alt="Clinic Logo" className="w-20 h-20 rounded-2xl object-cover bg-white shadow-md border-4 border-white mb-4" />
+          ) : (
+            <div className="inline-flex bg-white/20 backdrop-blur rounded-2xl p-5 text-white shadow-sm border border-white/20 mb-4">
+              <Stethoscope size={40} />
+            </div>
+          )}
+          <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-sm">{settings?.['clinic.name'] || 'Smile Dental'}</h1>
+          <p className="text-indigo-100 text-sm mt-1">{settings?.['clinic.tagline'] || 'Everything for your clinic, in one place'}</p>
         </div>
 
         <form onSubmit={(e) => signIn(e)} className="bg-white rounded-2xl shadow-2xl p-7 space-y-4">
