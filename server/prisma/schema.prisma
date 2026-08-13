@@ -461,16 +461,22 @@ model Message {
   kind        String    @default("GENERAL") // REMINDER | FOLLOW_UP | QUESTIONNAIRE | RECOMMENDATION | RECALL | BIRTHDAY | RISK_CONFIRM | GENERAL
   to          String
   body        String
-  status      String    @default("QUEUED") // QUEUED | SENT | FAILED
+  status      String    @default("QUEUED") // QUEUED | SENT | DELIVERED | READ | FAILED
   response    String? // stored patient reply (YES / NO / RESCHEDULE / 1/2/3)
   refType     String? // APPOINTMENT | FOLLOWUP | TREATMENT — what this message is about
   refId       Int?
+  waMessageId String? // WhatsApp wamid — correlates Meta delivery receipts
+  error       String? // provider error detail when status = FAILED
   scheduledAt DateTime?
   sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  respondedAt DateTime? // when the patient last replied — drives the 24h session window
   createdAt   DateTime  @default(now())
 
   @@index([patientId])
   @@index([clinicId, status])
+  @@index([waMessageId])
 }
 
 // Append-only chronological event stream per patient. Powers the timeline UI

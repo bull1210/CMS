@@ -7,7 +7,9 @@ import { AppModule } from './app.module';
 import { tenancy } from './core/tenancy';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: Meta webhook signatures (X-Hub-Signature-256) are HMACs of the
+  // exact bytes received — the parsed JSON isn't enough to verify them.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   // /files/* keeps its historical URL shape (stored paths and the Vite proxy
   // depend on it) while being served by the auth-checked FilesController.
   app.setGlobalPrefix('api', { exclude: ['files/(.*)'] });

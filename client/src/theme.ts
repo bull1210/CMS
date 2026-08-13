@@ -183,6 +183,8 @@ const STATUS_LABELS: Record<string, string> = {
   OVERDUE: 'Overdue',
   DISMISSED: 'Dismissed',
   SENT: 'Sent',
+  DELIVERED: 'Delivered',
+  READ: 'Seen',
   QUEUED: 'Sending…',
   FAILED: 'Failed to send',
   ORDERED: 'Sent to lab',
@@ -200,6 +202,7 @@ export function statusLabel(code?: string): string {
 /** Semantic tone per status — drives badge colour. */
 const STATUS_TONE: Record<string, 'good' | 'warn' | 'bad' | 'info' | 'mute'> = {
   CONFIRMED: 'good', COMPLETED: 'good', DONE: 'good', PAID: 'good', SENT: 'good',
+  DELIVERED: 'good', READ: 'good',
   ACCEPTED: 'good', RECEIVED: 'good', FITTED: 'good', ACTIVE: 'good',
   WAITING: 'warn', PENDING: 'warn', UNPAID: 'warn', PARTIAL: 'warn', QUEUED: 'warn',
   PROPOSED: 'warn', ORDERED: 'warn',

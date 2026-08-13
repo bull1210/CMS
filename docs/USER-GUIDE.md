@@ -195,16 +195,30 @@ Runs automatically every 15 minutes (also **Settings → Run scheduler now**):
 
 Nothing is ever sent twice for the same appointment/offset.
 
-**Going live with WhatsApp/SMS:** by default messages are logged to the server
-console (works offline, nothing leaves the machine). To send for real, set
-**Settings → SMS/WhatsApp gateway URL** to an HTTP endpoint (WhatsApp Cloud API
-relay, Twilio function, MSG91…). The system POSTs `{channel, to, body}` there.
-Point your gateway's inbound webhook at
-`POST http://<server>/api/messages/inbound` with `{from, body}` and replies are
-matched and processed automatically. When you go live, also set
-**Settings → Inbound webhook token** and configure your gateway to send it
-(`?token=…` or an `x-webhook-token` header) so nobody else can post fake
-replies.
+**Going live with WhatsApp (recommended):** connect your clinic's WhatsApp
+number directly to Meta's Cloud API — no middleman. In **Settings → WhatsApp**
+paste the Phone Number ID and permanent access token from your Meta developer
+app (WhatsApp → API Setup), invent a verify token, and save. Then in Meta's
+dashboard (WhatsApp → Configuration → Webhook) paste the callback URL and
+verify token the card shows you, and subscribe to the **messages** field. Use
+**Send test** to confirm the pipe — it returns Meta's exact error when
+something is off. Templates: create `appointment_reminder`, `recall_due` and
+`follow_up_due` (category *Utility*, body-only) in WhatsApp Manager; the
+system automatically uses them when a patient hasn't messaged you in the last
+24 hours (WhatsApp's rule) and plain text when they have. Delivery ticks
+(Sent → Delivered → Seen) appear in the message log, and patient replies
+(YES / 1 / 2 / 3) confirm or cancel appointments automatically. Meta-side
+account setup (business verification, number, templates) is described in the
+spec: `docs/superpowers/specs/2026-08-13-whatsapp-integration-design.md`.
+
+**Going live via a generic SMS gateway (alternative):** set
+**Settings → SMS/WhatsApp gateway URL** to an HTTP endpoint (Twilio function,
+MSG91…). The system POSTs `{channel, to, body}` there. Point your gateway's
+inbound webhook at `POST http://<server>/api/messages/inbound` with
+`{from, body}` and replies are matched and processed automatically. When you
+go live, also set **Settings → Inbound webhook token** and configure your
+gateway to send it (`?token=…` or an `x-webhook-token` header) so nobody else
+can post fake replies.
 
 ## 7. Search
 

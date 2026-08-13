@@ -63,6 +63,10 @@ export class RemindersScheduler {
     };
   }
 
+  private fmtWhen(d: Date) {
+    return d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
   private parseOffsets(raw: string): { label: string; ms: number }[] {
     // "7d,3d,1d,2h" -> offsets before the appointment at which to remind
     return raw
@@ -93,7 +97,7 @@ export class RemindersScheduler {
       },
       include: { patient: true, doctor: true },
     });
-    const { doctor } = await this.clinicVars();
+    const { clinic, doctor } = await this.clinicVars();
     let sent = 0;
     for (const appt of appointments) {
       for (const offset of offsets) {
@@ -101,10 +105,8 @@ export class RemindersScheduler {
         if (remindAt > now) continue; // not yet time for this offset
         const kind = `REMINDER_${offset.label.toUpperCase()}`;
         if (await this.messaging.alreadySent(kind, 'APPOINTMENT', appt.id)) continue;
-        const when = appt.startsAt.toLocaleString('en-IN', {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        });
+        const when = this.fmtWhen(appt.startsAt);
+        const docName = appt.doctor?.name ?? doctor;
         await this.messaging.send({
           patientId: appt.patientId,
           channel: appt.patient.whatsapp ? 'WHATSAPP' : 'SMS',
@@ -112,9 +114,10 @@ export class RemindersScheduler {
           to: appt.patient.whatsapp || appt.patient.phone,
           refType: 'APPOINTMENT',
           refId: appt.id,
+          template: { key: 'reminder', params: [appt.patient.name, docName, clinic, when] },
           body:
             `Hello ${appt.patient.name},\n\nThis is a reminder for your appointment with ` +
-            `${appt.doctor?.name ?? doctor} on ${when}.\n\nReply:\n1 = Confirm\n2 = Reschedule\n3 = Cancel`,
+            `${docName} on ${when}.\n\nReply:\n1 = Confirm\n2 = Reschedule\n3 = Cancel`,
         });
         sent++;
       }
@@ -132,6 +135,7 @@ export class RemindersScheduler {
       },
       include: { patient: true },
     });
+    const { clinic, doctor } = await this.clinicVars();
     let sent = 0;
     for (const appt of appointments) {
       if (await this.messaging.alreadySent('QUESTIONNAIRE', 'APPOINTMENT', appt.id)) continue;
@@ -142,6 +146,7 @@ export class RemindersScheduler {
         to: appt.patient.whatsapp || appt.patient.phone,
         refType: 'APPOINTMENT',
         refId: appt.id,
+        template: { key: 'reminder', params: [appt.patient.name, doctor, clinic, this.fmtWhen(appt.startsAt)] },
         body: `Hello ${appt.patient.name},\n\nWill you attend tomorrow's appointment?\n\nReply:\nYES\nNO\nRESCHEDULE`,
       });
       sent++;
@@ -168,6 +173,7 @@ export class RemindersScheduler {
         to: fu.patient.whatsapp || fu.patient.phone,
         refType: 'FOLLOWUP',
         refId: fu.id,
+        template: { key: 'followup', params: [fu.patient.name, treatment, doctor] },
         body:
           `Hello ${fu.patient.name},\n\n${treatment} recommended by ${doctor} is due. ` +
           `Please book an appointment. Reply YES to schedule.`,
@@ -219,6 +225,7 @@ export class RemindersScheduler {
         to: p.whatsapp || p.phone,
         refType: 'PATIENT',
         refId: p.id,
+        template: { key: 'recall', params: [p.name, String(months), clinic] },
         body:
           `Hello ${p.name},\n\nIt has been over ${months} months since your last visit to ${clinic}. ` +
           `${doctor} recommends a routine check-up and cleaning. Reply YES to book an appointment.`,
@@ -236,7 +243,7 @@ export class RemindersScheduler {
   private async highRiskConfirmations() {
     const risky = (await this.risk.upcoming(24)).filter((r) => r.level === 'HIGH');
     if (!risky.length) return 0;
-    const { doctor } = await this.clinicVars();
+    const { clinic, doctor } = await this.clinicVars();
     let sent = 0;
     for (const r of risky) {
       if (await this.messaging.alreadySent('RISK_CONFIRM', 'APPOINTMENT', r.appointmentId)) continue;
@@ -248,6 +255,7 @@ export class RemindersScheduler {
         to: r.patient.whatsapp || r.patient.phone,
         refType: 'APPOINTMENT',
         refId: r.appointmentId,
+        template: { key: 'reminder', params: [r.patient.name, doctor, clinic, when] },
         body:
           `Hello ${r.patient.name},\n\n${doctor} has reserved ${when} especially for you. ` +
           `Can we count on you? A quick reply helps us plan the day.\n\nReply:\n1 = Yes, I'll be there\n2 = Reschedule\n3 = Cancel`,

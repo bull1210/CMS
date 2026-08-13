@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, DatabaseBackup, Play, Plus, Settings as SettingsIcon, UserCog, Palette, Users, Bell, Server } from 'lucide-react';
+import { Building2, DatabaseBackup, MessageCircle, Play, Plus, Settings as SettingsIcon, UserCog, Palette, Users, Bell, Server } from 'lucide-react';
 import { api, getToken, getUser } from '../api';
 import { Badge, Button, Card, Empty, Field, inputCls, Modal, PageHeader, Spinner } from '../components/ui';
 
@@ -199,6 +199,119 @@ function WorkingHoursEditor({ value, onChange, disabled }: { value?: string; onC
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * WhatsApp Cloud API connection — per-clinic credentials, the two values to
+ * paste into Meta's webhook form, and a one-click test send. See
+ * docs/superpowers/specs/2026-08-13-whatsapp-integration-design.md.
+ */
+function WhatsAppCard({ settings }: { settings?: Record<string, string> }) {
+  const qc = useQueryClient();
+  const parseTemplates = (raw?: string) => {
+    try { return { reminder: 'appointment_reminder', recall: 'recall_due', followup: 'follow_up_due', ...JSON.parse(raw || '{}') }; }
+    catch { return { reminder: 'appointment_reminder', recall: 'recall_due', followup: 'follow_up_due' }; }
+  };
+  const [wa, setWa] = useState(() => ({
+    phoneNumberId: settings?.['whatsapp.phoneNumberId'] ?? '',
+    accessToken: settings?.['whatsapp.accessToken'] ?? '',
+    verifyToken: settings?.['whatsapp.verifyToken'] ?? '',
+    appSecret: settings?.['whatsapp.appSecret'] ?? '',
+    lang: settings?.['whatsapp.lang'] ?? 'en',
+    templates: parseTemplates(settings?.['whatsapp.templates']),
+  }));
+  const [saved, setSaved] = useState('');
+  const [testTo, setTestTo] = useState('');
+  const [testResult, setTestResult] = useState('');
+
+  const save = useMutation({
+    mutationFn: () =>
+      api('/settings', {
+        method: 'PUT',
+        body: {
+          'whatsapp.phoneNumberId': wa.phoneNumberId.trim(),
+          'whatsapp.accessToken': wa.accessToken.trim(),
+          'whatsapp.verifyToken': wa.verifyToken.trim(),
+          'whatsapp.appSecret': wa.appSecret.trim(),
+          'whatsapp.lang': wa.lang.trim() || 'en',
+          'whatsapp.templates': JSON.stringify(wa.templates),
+        },
+      }),
+    onSuccess: () => {
+      setSaved('Saved ✓');
+      setTimeout(() => setSaved(''), 2000);
+      qc.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+  const test = useMutation({
+    mutationFn: () =>
+      api<{ status: string; error?: string }>('/messages/test-whatsapp', { body: { to: testTo } }),
+    onSuccess: (m) =>
+      setTestResult(m.status === 'SENT' ? 'Sent ✓ — check the phone!' : `Failed: ${m.error ?? 'unknown error'}`),
+    onError: (e) => setTestResult(`Failed: ${e.message}`),
+  });
+
+  const input = 'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-200';
+  const connected = !!(wa.phoneNumberId && wa.accessToken);
+  const webhookUrl = `${location.origin}/api/messages/whatsapp`;
+
+  return (
+    <Card
+      icon={MessageCircle}
+      title="WhatsApp"
+      hint="Connect this clinic's WhatsApp number so reminders and recall messages actually reach patients."
+      collapsible
+      action={
+        <span className={`text-xs font-bold px-2 py-1 rounded-lg ${connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+          {connected ? 'Connected' : 'Not set up'}
+        </span>
+      }
+    >
+      <p className="text-sm text-slate-500 mb-4">
+        Values come from your Meta developer app (WhatsApp → API Setup). Leave empty to keep sending
+        through the generic gateway / console. Reminders outside WhatsApp's 24-hour reply window are
+        sent with your approved templates — the names below must match WhatsApp Manager exactly.
+      </p>
+      <div className="grid md:grid-cols-2 gap-4">
+        <Field label="Phone Number ID"><input className={input} value={wa.phoneNumberId} onChange={(e) => setWa({ ...wa, phoneNumberId: e.target.value })} /></Field>
+        <Field label="Permanent access token"><input type="password" className={input} value={wa.accessToken} onChange={(e) => setWa({ ...wa, accessToken: e.target.value })} /></Field>
+        <Field label="Verify token" hint="Any secret string you invent — paste the same one into Meta's webhook form.">
+          <input className={input} value={wa.verifyToken} onChange={(e) => setWa({ ...wa, verifyToken: e.target.value })} />
+        </Field>
+        <Field label="App secret" hint="Optional but recommended — lets the server verify events really come from Meta.">
+          <input type="password" className={input} value={wa.appSecret} onChange={(e) => setWa({ ...wa, appSecret: e.target.value })} />
+        </Field>
+        <Field label="Reminder template name"><input className={input} value={wa.templates.reminder} onChange={(e) => setWa({ ...wa, templates: { ...wa.templates, reminder: e.target.value } })} /></Field>
+        <Field label="Recall template name"><input className={input} value={wa.templates.recall} onChange={(e) => setWa({ ...wa, templates: { ...wa.templates, recall: e.target.value } })} /></Field>
+        <Field label="Follow-up template name"><input className={input} value={wa.templates.followup} onChange={(e) => setWa({ ...wa, templates: { ...wa.templates, followup: e.target.value } })} /></Field>
+        <Field label="Template language code" hint='"en", "en_US", "ta", "hi"…'>
+          <input className={input} value={wa.lang} onChange={(e) => setWa({ ...wa, lang: e.target.value })} />
+        </Field>
+      </div>
+
+      <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 text-sm">
+        <div className="font-semibold text-slate-700 mb-1">Paste into Meta → WhatsApp → Configuration → Webhook</div>
+        <div className="text-slate-600">Callback URL: <code className="text-xs bg-white px-1.5 py-0.5 rounded border border-slate-200">{webhookUrl}</code></div>
+        <div className="text-slate-600 mt-1">Verify token: <code className="text-xs bg-white px-1.5 py-0.5 rounded border border-slate-200">{wa.verifyToken || '(set one above first)'}</code></div>
+        <div className="text-xs text-slate-400 mt-1.5">Subscribe to the <b>messages</b> webhook field. The URL must be reachable from the internet (hosted server or tunnel).</div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3 mt-4">
+        <Button onClick={() => save.mutate()} disabled={save.isPending}>Save WhatsApp settings</Button>
+        {saved && <span className="text-sm font-semibold text-emerald-600 self-center">{saved}</span>}
+        <div className="flex-1" />
+        <Field label="Send a test to (with country code)" className="w-56">
+          <input className={input} placeholder="+91 98…" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
+        </Field>
+        <Button variant="secondary" onClick={() => { setTestResult(''); test.mutate(); }} disabled={!testTo || !connected || test.isPending}>
+          {test.isPending ? 'Sending…' : 'Send test'}
+        </Button>
+      </div>
+      {testResult && (
+        <p className={`text-sm mt-2 ${testResult.startsWith('Sent') ? 'text-emerald-600' : 'text-rose-600'}`}>{testResult}</p>
+      )}
+    </Card>
   );
 }
 
@@ -418,6 +531,8 @@ export default function Settings() {
         </p>
         {schedulerMsg && <p className="text-sm text-emerald-600 mt-2">{schedulerMsg}</p>}
       </Card>
+
+      {isAdmin && <WhatsAppCard settings={settings} />}
 
       {isAdmin && (
         <Card icon={DatabaseBackup} title="Backups" hint="Your data is backed up automatically." collapsible>

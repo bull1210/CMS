@@ -121,9 +121,24 @@ remain.
   progress, lab cases open) and there is no revenue/collection card or recent-
   replies card.
 - **Messaging:** `MessagingService.send()` persists the Message first, then
-  webhook POST (`messaging.webhookUrl` setting) or console log. All scheduler
-  jobs are idempotent via `alreadySent(kind, refType, refId, sinceDays?)`.
-  Inbound webhook optionally guarded by `messaging.inboundToken`.
+  dispatches: **WhatsApp Cloud API** when the clinic has
+  `whatsapp.phoneNumberId` + `whatsapp.accessToken` settings (per-clinic —
+  each SaaS clinic sends from its own number; spec in
+  `docs/superpowers/specs/2026-08-13-whatsapp-integration-design.md`), else
+  webhook POST (`messaging.webhookUrl`), else console log. WhatsApp obeys the
+  24h rule: free text only within 24h of the patient's last reply
+  (`Message.respondedAt`); outside it, kinds carry a `template` payload
+  (keys reminder/recall/followup → names in `whatsapp.templates`). Meta
+  webhook at `/messages/whatsapp` (@Public): GET handshake matches any
+  clinic's `whatsapp.verifyToken`; POST routes by `phone_number_id` →
+  `tenancy.runAs`, optional `X-Hub-Signature-256` check vs
+  `whatsapp.appSecret` (needs `rawBody: true` in main.ts). Delivery receipts
+  flip SENT → DELIVERED → READ (never downgrade) — which is why
+  `alreadySent()` counts all three as sent; don't narrow it back to SENT.
+  All scheduler jobs are idempotent via
+  `alreadySent(kind, refType, refId, sinceDays?)`. The legacy generic inbound
+  webhook (`/messages/inbound`, guarded by `messaging.inboundToken`) remains
+  for SMS gateways.
 - **Archived patients** (`Patient.active=false`): every scheduler job and
   outreach list (recall, leakage, risk) must filter `patient: { active: true }`.
   Keep this invariant when adding new automated messaging.
