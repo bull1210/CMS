@@ -1,6 +1,15 @@
-// Clinic Management System schema.
+// Clinic Management System schema — multi-tenant (multi-clinic SaaS).
 // SQLite now; provider swap to postgresql/mysql later is the only change needed here.
 // SQLite limits: no native enums (validated strings used), no Json column (JSON text used).
+//
+// Tenancy: every tenant-owned model carries clinicId. Scoping is enforced
+// automatically by Prisma middleware in core/prisma.service.ts reading the
+// per-request AsyncLocalStorage tenant context — controllers never add
+// clinicId by hand. The @default(0) on clinicId exists ONLY to relax the
+// generated create types (the middleware injects the real value at runtime);
+// an actual 0 violates the Clinic foreign key and fails loudly.
+// InvoiceItem/TreatmentPlanItem deliberately have no clinicId: they are only
+// reachable through their parent and cascade with it.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,31 +20,72 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// A tenant. Deactivating a clinic instantly locks out its users (AuthGuard
+// re-checks on every request, same pattern as User.active).
+model Clinic {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique // url-safe identity, subdomain-ready
+  phone     String?
+  address   String?
+  active    Boolean  @default(true)
+  plan      String   @default("TRIAL") // TRIAL | STANDARD | SUSPENDED (billing deferred)
+  createdAt DateTime @default(now())
+
+  users          User[]
+  patients       Patient[]
+  procedures     Procedure[]
+  treatments     Treatment[]
+  diagnoses      Diagnosis[]
+  appointments   Appointment[]
+  toothFindings  ToothFinding[]
+  treatmentPlans TreatmentPlan[]
+  labWorks       LabWork[]
+  inventoryItems InventoryItem[]
+  stockTxns      StockTxn[]
+  expenses       Expense[]
+  invoices       Invoice[]
+  payments       Payment[]
+  documents      Document[]
+  prescriptions  Prescription[]
+  followUps      FollowUp[]
+  messages       Message[]
+  timeline       TimelineEvent[]
+  auditLogs      AuditLog[]
+  settings       Setting[]
+}
+
 model User {
   id           Int      @id @default(autoincrement())
+  clinicId     Int? // null = SUPER_ADMIN (Aatmam platform staff)
+  clinic       Clinic?  @relation(fields: [clinicId], references: [id])
   name         String
-  email        String   @unique
+  email        String   @unique // globally unique: login stays email+password, clinic rides in the JWT
   passwordHash String
-  role         String // ADMIN | DOCTOR | RECEPTIONIST
+  role         String // SUPER_ADMIN | ADMIN | DOCTOR | ASSISTANT
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  treatments     Treatment[]
-  diagnoses      Diagnosis[]
-  appointments   Appointment[] @relation("DoctorAppointments")
+  treatments          Treatment[]
+  diagnoses           Diagnosis[]
+  appointments        Appointment[] @relation("DoctorAppointments")
   createdAppointments Appointment[] @relation("CreatedAppointments")
-  documents      Document[]
-  prescriptions  Prescription[]
-  auditLogs      AuditLog[]
-  toothFindings  ToothFinding[]
-  treatmentPlans TreatmentPlan[]
-  stockTxns      StockTxn[]
-  expenses       Expense[]
+  documents           Document[]
+  prescriptions       Prescription[]
+  auditLogs           AuditLog[]
+  toothFindings       ToothFinding[]
+  treatmentPlans      TreatmentPlan[]
+  stockTxns           StockTxn[]
+  expenses            Expense[]
+
+  @@index([clinicId])
 }
 
 model Patient {
   id               Int       @id @default(autoincrement())
-  code             String    @unique // human-friendly patient ID, e.g. P-0001
+  clinicId         Int       @default(0)
+  clinic           Clinic    @relation(fields: [clinicId], references: [id])
+  code             String // human-friendly patient ID, per-clinic sequence (P-0001)
   name             String
   gender           String? // MALE | FEMALE | OTHER
   dob              DateTime?
@@ -66,30 +116,37 @@ model Patient {
   treatmentPlans TreatmentPlan[]
   labWorks       LabWork[]
 
-  @@index([name])
-  @@index([phone])
+  @@unique([clinicId, code])
+  @@index([clinicId, name])
+  @@index([clinicId, phone])
 }
 
-// Master procedure catalog. followUpId encodes the treatment-flow graph
-// (e.g. Root Canal Stage 1 -> Stage 2 after 14 days).
+// Master procedure catalog (per clinic). followUpId encodes the treatment-flow
+// graph (e.g. Root Canal Stage 1 -> Stage 2 after 14 days).
 model Procedure {
-  id           Int     @id @default(autoincrement())
-  name         String  @unique
+  id           Int         @id @default(autoincrement())
+  clinicId     Int         @default(0)
+  clinic       Clinic      @relation(fields: [clinicId], references: [id])
+  name         String
   description  String?
-  cost         Float   @default(0)
+  cost         Float       @default(0)
   followUpId   Int?
   followUp     Procedure?  @relation("TreatmentFlow", fields: [followUpId], references: [id])
   precededBy   Procedure[] @relation("TreatmentFlow")
   followUpDays Int?
-  active       Boolean @default(true)
+  active       Boolean     @default(true)
 
-  treatments Treatment[]
+  treatments           Treatment[]
   followUpsRecommended FollowUp[]
-  planItems  TreatmentPlanItem[]
+  planItems            TreatmentPlanItem[]
+
+  @@unique([clinicId, name])
 }
 
 model Treatment {
   id          Int       @id @default(autoincrement())
+  clinicId    Int       @default(0)
+  clinic      Clinic    @relation(fields: [clinicId], references: [id])
   patientId   Int
   patient     Patient   @relation(fields: [patientId], references: [id])
   procedureId Int
@@ -108,6 +165,7 @@ model Treatment {
   labWorks        LabWork[]
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 // Odontogram: per-tooth clinical findings charted by the doctor. FDI notation
@@ -115,6 +173,8 @@ model Treatment {
 // chart; RESOLVED keeps the history without cluttering it.
 model ToothFinding {
   id          Int       @id @default(autoincrement())
+  clinicId    Int       @default(0)
+  clinic      Clinic    @relation(fields: [clinicId], references: [id])
   patientId   Int
   patient     Patient   @relation(fields: [patientId], references: [id])
   tooth       String // FDI tooth number
@@ -127,12 +187,15 @@ model ToothFinding {
   resolvedAt  DateTime?
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 // Phased treatment plan / cost estimate presented to the patient.
 // Accepting a plan materializes its items as PLANNED treatments.
 model TreatmentPlan {
   id        Int       @id @default(autoincrement())
+  clinicId  Int       @default(0)
+  clinic    Clinic    @relation(fields: [clinicId], references: [id])
   patientId Int
   patient   Patient   @relation(fields: [patientId], references: [id])
   doctorId  Int?
@@ -146,6 +209,7 @@ model TreatmentPlan {
   items TreatmentPlanItem[]
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 model TreatmentPlanItem {
@@ -163,6 +227,8 @@ model TreatmentPlanItem {
 // Dental lab case tracking (crowns, bridges, dentures, aligners sent out).
 model LabWork {
   id          Int        @id @default(autoincrement())
+  clinicId    Int        @default(0)
+  clinic      Clinic     @relation(fields: [clinicId], references: [id])
   patientId   Int
   patient     Patient    @relation(fields: [patientId], references: [id])
   treatmentId Int?
@@ -179,14 +245,16 @@ model LabWork {
   notes       String?
 
   @@index([patientId])
-  @@index([status])
+  @@index([clinicId, status])
 }
 
 // Consumables/materials stock. Quantity is derived-adjustable via StockTxn
 // so every change is attributable.
 model InventoryItem {
   id           Int       @id @default(autoincrement())
-  name         String    @unique
+  clinicId     Int       @default(0)
+  clinic       Clinic    @relation(fields: [clinicId], references: [id])
+  name         String
   category     String    @default("CONSUMABLE") // CONSUMABLE | MEDICINE | INSTRUMENT | LAB_MATERIAL | OTHER
   unit         String    @default("pcs")
   stockQty     Float     @default(0)
@@ -196,10 +264,14 @@ model InventoryItem {
   active       Boolean   @default(true)
 
   txns StockTxn[]
+
+  @@unique([clinicId, name])
 }
 
 model StockTxn {
   id          Int           @id @default(autoincrement())
+  clinicId    Int           @default(0)
+  clinic      Clinic        @relation(fields: [clinicId], references: [id])
   itemId      Int
   item        InventoryItem @relation(fields: [itemId], references: [id])
   delta       Float // positive = received, negative = consumed
@@ -210,11 +282,14 @@ model StockTxn {
   createdAt   DateTime      @default(now())
 
   @@index([itemId])
+  @@index([clinicId])
 }
 
 // Clinic operating expenses — pairs with payments for profit & loss reporting.
 model Expense {
   id          Int      @id @default(autoincrement())
+  clinicId    Int      @default(0)
+  clinic      Clinic   @relation(fields: [clinicId], references: [id])
   date        DateTime @default(now())
   category    String   @default("OTHER") // RENT | SALARY | LAB | MATERIALS | EQUIPMENT | UTILITIES | MARKETING | OTHER
   description String
@@ -224,11 +299,13 @@ model Expense {
   createdBy   User?    @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
 
-  @@index([date])
+  @@index([clinicId, date])
 }
 
 model Diagnosis {
   id           Int      @id @default(autoincrement())
+  clinicId     Int      @default(0)
+  clinic       Clinic   @relation(fields: [clinicId], references: [id])
   patientId    Int
   patient      Patient  @relation(fields: [patientId], references: [id])
   doctorId     Int?
@@ -240,10 +317,13 @@ model Diagnosis {
   createdAt    DateTime @default(now())
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 model Appointment {
-  id        Int      @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
+  clinicId    Int      @default(0)
+  clinic      Clinic   @relation(fields: [clinicId], references: [id])
   patientId   Int
   patient     Patient  @relation(fields: [patientId], references: [id])
   doctorId    Int?
@@ -251,19 +331,21 @@ model Appointment {
   createdById Int?
   createdBy   User?    @relation("CreatedAppointments", fields: [createdById], references: [id])
   startsAt    DateTime
-  endsAt    DateTime
-  type      String   @default("CONSULTATION") // CONSULTATION | FOLLOW_UP | PROCEDURE | EMERGENCY
-  status    String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | WAITING | COMPLETED | CANCELLED | NO_SHOW
-  notes     String?
-  createdAt DateTime @default(now())
+  endsAt      DateTime
+  type        String   @default("CONSULTATION") // CONSULTATION | FOLLOW_UP | PROCEDURE | EMERGENCY
+  status      String   @default("SCHEDULED") // SCHEDULED | CONFIRMED | WAITING | COMPLETED | CANCELLED | NO_SHOW | RESCHEDULED
+  notes       String?
+  createdAt   DateTime @default(now())
 
-  @@index([startsAt])
+  @@index([clinicId, startsAt])
   @@index([patientId])
 }
 
 model Invoice {
   id          Int        @id @default(autoincrement())
-  number      String     @unique // INV-2026-0001
+  clinicId    Int        @default(0)
+  clinic      Clinic     @relation(fields: [clinicId], references: [id])
+  number      String // INV-2026-0001, per-clinic sequence
   patientId   Int
   patient     Patient    @relation(fields: [patientId], references: [id])
   treatmentId Int?
@@ -279,6 +361,7 @@ model Invoice {
   items    InvoiceItem[]
   payments Payment[]
 
+  @@unique([clinicId, number])
   @@index([patientId])
 }
 
@@ -294,6 +377,8 @@ model InvoiceItem {
 
 model Payment {
   id        Int      @id @default(autoincrement())
+  clinicId  Int      @default(0)
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
   patientId Int
   patient   Patient  @relation(fields: [patientId], references: [id])
   invoiceId Int?
@@ -305,15 +390,18 @@ model Payment {
   paidAt    DateTime @default(now())
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 model Document {
   id           Int      @id @default(autoincrement())
+  clinicId     Int      @default(0)
+  clinic       Clinic   @relation(fields: [clinicId], references: [id])
   patientId    Int
   patient      Patient  @relation(fields: [patientId], references: [id])
   category     String   @default("XRAY") // XRAY | PRESCRIPTION | SCAN | LAB_REPORT | INSURANCE | OTHER
   filename     String // original filename
-  storedPath   String // relative path under UPLOAD_DIR (storage abstraction: swap for S3 key later)
+  storedPath   String // relative key under UPLOAD_DIR, prefixed c<clinicId>/ (storage abstraction: swap for S3 key later)
   mimeType     String
   size         Int      @default(0)
   notes        String?
@@ -322,10 +410,13 @@ model Document {
   createdAt    DateTime @default(now())
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 model Prescription {
   id        Int      @id @default(autoincrement())
+  clinicId  Int      @default(0)
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
   patientId Int
   patient   Patient  @relation(fields: [patientId], references: [id])
   doctorId  Int?
@@ -334,12 +425,15 @@ model Prescription {
   createdAt DateTime @default(now())
 
   @@index([patientId])
+  @@index([clinicId])
 }
 
 // Follow-up engine: created automatically when a treatment with a defined
 // flow completes, or manually by the doctor.
 model FollowUp {
   id                Int        @id @default(autoincrement())
+  clinicId          Int        @default(0)
+  clinic            Clinic     @relation(fields: [clinicId], references: [id])
   patientId         Int
   patient           Patient    @relation(fields: [patientId], references: [id])
   procedureId       Int?
@@ -351,7 +445,7 @@ model FollowUp {
   note              String?
   createdAt         DateTime   @default(now())
 
-  @@index([dueDate])
+  @@index([clinicId, dueDate])
   @@index([patientId])
 }
 
@@ -359,6 +453,8 @@ model FollowUp {
 // pluggable; every message is stored for the dashboard and future AI use.
 model Message {
   id          Int       @id @default(autoincrement())
+  clinicId    Int       @default(0)
+  clinic      Clinic    @relation(fields: [clinicId], references: [id])
   patientId   Int?
   patient     Patient?  @relation(fields: [patientId], references: [id])
   channel     String    @default("WHATSAPP") // WHATSAPP | SMS | EMAIL
@@ -374,13 +470,15 @@ model Message {
   createdAt   DateTime  @default(now())
 
   @@index([patientId])
-  @@index([status])
+  @@index([clinicId, status])
 }
 
 // Append-only chronological event stream per patient. Powers the timeline UI
 // and is the substrate for future AI summaries/recall campaigns.
 model TimelineEvent {
   id        Int      @id @default(autoincrement())
+  clinicId  Int      @default(0)
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
   patientId Int
   patient   Patient  @relation(fields: [patientId], references: [id])
   type      String // APPOINTMENT | CONSULTATION | DIAGNOSIS | TREATMENT | PAYMENT | INVOICE | DOCUMENT | PRESCRIPTION | MESSAGE | FOLLOW_UP | NOTE
@@ -391,15 +489,25 @@ model TimelineEvent {
   createdAt DateTime @default(now())
 
   @@index([patientId, createdAt])
+  @@index([clinicId])
 }
 
+// Per-clinic key-value configuration (branding, working hours, closures,
+// Rx library, messaging/WhatsApp credentials).
 model Setting {
-  key   String @id
-  value String
+  id       Int    @id @default(autoincrement())
+  clinicId Int    @default(0)
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+  key      String
+  value    String
+
+  @@unique([clinicId, key])
 }
 
 model AuditLog {
   id        Int      @id @default(autoincrement())
+  clinicId  Int? // null = platform-level event (SUPER_ADMIN actions, failed logins)
+  clinic    Clinic?  @relation(fields: [clinicId], references: [id])
   userId    Int?
   user      User?    @relation(fields: [userId], references: [id])
   action    String // CREATE | UPDATE | DELETE | LOGIN | BACKUP | ...
@@ -409,4 +517,5 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+  @@index([clinicId])
 }

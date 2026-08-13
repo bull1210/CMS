@@ -6,12 +6,15 @@ import { extname, join } from 'path';
 import { PrismaService } from '../../core/prisma.service';
 import { AuditService } from '../../core/audit.service';
 import { TimelineService } from '../../core/timeline.service';
+import { tenancy } from '../../core/tenancy';
 import { AuthUser, CurrentUser, Roles, Public } from '../../core/auth.guard';
 
 const uploadDir = () => process.env.UPLOAD_DIR ?? './storage/uploads';
+// Per-clinic folder — served by the auth-checked files controller.
+const clinicDir = (req: unknown) => `c${(req as { user?: { clinicId?: number } }).user?.clinicId ?? 0}`;
 const storage = diskStorage({
-  destination: (_req, _file, cb) => {
-    const dir = join(process.cwd(), uploadDir());
+  destination: (req, _file, cb) => {
+    const dir = join(process.cwd(), uploadDir(), clinicDir(req));
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
@@ -48,18 +51,35 @@ export class SettingsController {
   @Public()
   @Get('public')
   async getPublicSettings() {
-    const rows = await this.prisma.setting.findMany({
-      where: { key: { in: ['clinic.name', 'clinic.tagline', 'clinic.logo', 'clinic.theme'] } }
+    // Pre-login branding has no tenant context. On a single-clinic install
+    // (laptop mode) this is simply "the" clinic; on the hosted SaaS the login
+    // page shows the first clinic only when there is exactly one — otherwise
+    // it stays generic (per-clinic branding appears after sign-in).
+    return tenancy.runPrivileged(async () => {
+      const clinics = await this.prisma.clinic.findMany({
+        where: { active: true },
+        select: { id: true },
+        take: 2,
+      });
+      if (clinics.length !== 1) return {};
+      const rows = await this.prisma.setting.findMany({
+        where: {
+          clinicId: clinics[0].id,
+          key: { in: ['clinic.name', 'clinic.tagline', 'clinic.logo', 'clinic.theme'] },
+        },
+      });
+      return Object.fromEntries(rows.map((r) => [r.key, r.value]));
     });
-    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
 
   @Roles('ADMIN')
   @Put()
   async update(@CurrentUser() user: AuthUser, @Body() body: Record<string, string>) {
     for (const [key, value] of Object.entries(body ?? {})) {
+      // `where: { key }` is rewritten to the [clinicId, key] composite by the
+      // tenant middleware (hence the cast) — same for every upsert below.
       await this.prisma.setting.upsert({
-        where: { key },
+        where: { key } as never,
         update: { value: String(value) },
         create: { key, value: String(value) },
       });
@@ -71,7 +91,7 @@ export class SettingsController {
   @Roles('ADMIN', 'DOCTOR', 'ASSISTANT')
   @Put('closures')
   async updateClosures(@CurrentUser() user: AuthUser, @Body() body: { closures: string }) {
-    const oldRow = await this.prisma.setting.findUnique({ where: { key: 'clinic.closures' } });
+    const oldRow = await this.prisma.setting.findFirst({ where: { key: 'clinic.closures' } });
     let oldClosures: Record<string, string> = {};
     let newClosures: Record<string, string> = {};
     try { if (oldRow?.value) oldClosures = JSON.parse(oldRow.value); } catch (e) {}
@@ -120,7 +140,7 @@ export class SettingsController {
     }
 
     await this.prisma.setting.upsert({
-      where: { key: 'clinic.closures' },
+      where: { key: 'clinic.closures' } as never,
       update: { value: body.closures },
       create: { key: 'clinic.closures', value: body.closures },
     });
@@ -130,7 +150,7 @@ export class SettingsController {
   }
   @Put('doctor-closures')
   async updateDoctorClosures(@CurrentUser() user: AuthUser, @Body() body: { doctorId: number; closures: string }) {
-    const oldRow = await this.prisma.setting.findUnique({ where: { key: 'doctor.closures' } });
+    const oldRow = await this.prisma.setting.findFirst({ where: { key: 'doctor.closures' } });
     let docClosures: Record<string, Record<string, string>> = {};
     try { if (oldRow?.value) docClosures = JSON.parse(oldRow.value); } catch (e) {}
 
@@ -185,7 +205,7 @@ export class SettingsController {
     const finalValue = JSON.stringify(docClosures);
 
     await this.prisma.setting.upsert({
-      where: { key: 'doctor.closures' },
+      where: { key: 'doctor.closures' } as never,
       update: { value: finalValue },
       create: { key: 'doctor.closures', value: finalValue },
     });
@@ -206,9 +226,9 @@ export class SettingsController {
     ) {
       throw new BadRequestException('Only JPG, PNG and WEBP files are allowed');
     }
-    const path = `/files/${file.filename}`;
+    const path = `/files/c${user.clinicId}/${file.filename}`;
     await this.prisma.setting.upsert({
-      where: { key: 'clinic.logo' },
+      where: { key: 'clinic.logo' } as never,
       update: { value: path },
       create: { key: 'clinic.logo', value: path },
     });

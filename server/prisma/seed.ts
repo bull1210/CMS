@@ -1,13 +1,42 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { seedClinicDefaults } from '../src/core/clinic-defaults';
 
+// The seed uses a raw PrismaClient (no tenant middleware), so every row sets
+// clinicId explicitly. It bootstraps:
+//  - the platform SUPER_ADMIN (clinicId null)
+//  - one default clinic ("Smile Dental") with demo users — this is what keeps
+//    the single-clinic laptop install working: a SaaS of one
+//  - sample patients/appointments only when the clinic is empty
 const prisma = new PrismaClient();
 
 async function main() {
-  // ---- Users -------------------------------------------------------------
-  // Migrate any legacy front-desk accounts to the current role code so an
-  // already-seeded database keeps working after the RECEPTIONIST → ASSISTANT
-  // rename (idempotent — a no-op once migrated).
+  // ---- Platform account ---------------------------------------------------
+  await prisma.user.upsert({
+    where: { email: 'super@aatmam.local' },
+    update: {},
+    create: {
+      name: 'Aatmam Platform Admin',
+      email: 'super@aatmam.local',
+      role: 'SUPER_ADMIN',
+      passwordHash: await bcrypt.hash('super123', 10),
+    },
+  });
+
+  // ---- Default clinic -----------------------------------------------------
+  const clinic = await prisma.clinic.upsert({
+    where: { slug: 'smile-dental' },
+    update: {},
+    create: {
+      name: 'Smile Dental Clinic',
+      slug: 'smile-dental',
+      phone: '+91 98400 00000',
+      address: '12 MG Road, Chennai',
+    },
+  });
+
+  // Migrate any legacy front-desk accounts to the current role code
+  // (idempotent — a no-op once migrated).
   await prisma.user.updateMany({ where: { role: 'RECEPTIONIST' }, data: { role: 'ASSISTANT' } });
 
   const users = [
@@ -18,8 +47,9 @@ async function main() {
   for (const u of users) {
     await prisma.user.upsert({
       where: { email: u.email },
-      update: {},
+      update: { clinicId: clinic.id },
       create: {
+        clinicId: clinic.id,
         name: u.name,
         email: u.email,
         role: u.role,
@@ -28,88 +58,21 @@ async function main() {
     });
   }
 
-  // ---- Settings ----------------------------------------------------------
-  const settings: Record<string, string> = {
+  // ---- Settings + procedure catalogue (shared with platform onboarding) ---
+  await seedClinicDefaults(prisma, clinic.id, {
     'clinic.name': 'Smile Dental Clinic',
     'clinic.doctor': 'Dr. Sharma',
     'clinic.address': '12 MG Road, Chennai',
     'clinic.phone': '+91 98400 00000',
-    'billing.taxPercent': '0',
-    'billing.currency': 'INR',
-    'reminders.offsets': '3d,1d,2h',
-    'messaging.webhookUrl': '',
-    'recall.months': '6',
-    'greetings.birthday': 'on',
-  };
-  for (const [key, value] of Object.entries(settings)) {
-    await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
-  }
+  });
 
-  // ---- Procedure catalog with treatment flow -----------------------------
-  // Chains: RCT1 -> RCT2 -> Crown ; Cleaning -> Whitening
-  const proc = async (name: string, cost: number, description?: string) =>
-    prisma.procedure.upsert({ where: { name }, update: {}, create: { name, cost, description } });
-
-  const cleaning = await proc('Cleaning (Scaling & Polishing)', 1500, 'Full mouth scaling and polishing');
-  const whitening = await proc('Whitening', 8000, 'In-office teeth whitening');
-  const filling = await proc('Filling (Composite)', 2000, 'Composite restoration, per tooth');
-  const rct1 = await proc('Root Canal Stage 1', 3000, 'Access opening and cleaning');
-  const rct2 = await proc('Root Canal Stage 2', 3500, 'Obturation');
-  const crown = await proc('Crown (Ceramic)', 6000, 'Ceramic crown, per unit');
-  await proc('Extraction', 1500, 'Simple extraction');
-  await proc('Implant', 35000, 'Single implant with crown');
-  await proc('Consultation', 500, 'Clinical examination and treatment planning');
-
-  await prisma.procedure.update({ where: { id: rct1.id }, data: { followUpId: rct2.id, followUpDays: 14 } });
-  await prisma.procedure.update({ where: { id: rct2.id }, data: { followUpId: crown.id, followUpDays: 7 } });
-  await prisma.procedure.update({ where: { id: cleaning.id }, data: { followUpId: whitening.id, followUpDays: 30 } });
-
-  // ---- Treatment catalog from the clinic's paper case sheet --------------
-  // Grouped under the eight "Treatment Adviced" headings (IOPA, Oral
-  // Prophylaxis, Restorations, RCT, Extractions, Prosthesis, Implants,
-  // Miscellaneous). Prices are placeholder INR — edit under Treatments.
-  // Upsert-by-name means this is safe to re-run and won't touch anything above.
-  const catalog: { category: string; name: string; cost: number; description?: string }[] = [
-    { category: 'IOPA', name: 'IOPA (Intraoral X-ray)', cost: 300, description: 'Single intraoral periapical radiograph' },
-    { category: 'IOPA', name: 'Full Mouth X-ray Series', cost: 2500, description: 'Complete intraoral radiographic survey' },
-
-    { category: 'Oral Prophylaxis', name: 'Oral Prophylaxis (Scaling)', cost: 1500, description: 'Full-mouth scaling and polishing' },
-    { category: 'Oral Prophylaxis', name: 'Deep Cleaning (Root Planing)', cost: 3000, description: 'Subgingival scaling and root planing, per quadrant' },
-
-    { category: 'Restorations', name: 'Restoration — Composite', cost: 2000, description: 'Tooth-coloured composite filling, per tooth' },
-    { category: 'Restorations', name: 'Restoration — GIC', cost: 1200, description: 'Glass-ionomer restoration, per tooth' },
-    { category: 'Restorations', name: 'Restoration — Amalgam', cost: 1000, description: 'Silver amalgam restoration, per tooth' },
-
-    { category: 'RCT', name: 'Root Canal Treatment (Anterior)', cost: 5000, description: 'Endodontic treatment, single-rooted tooth' },
-    { category: 'RCT', name: 'Root Canal Treatment (Posterior)', cost: 7000, description: 'Endodontic treatment, molar' },
-    { category: 'RCT', name: 'Post & Core', cost: 3500, description: 'Post and core build-up after RCT' },
-
-    { category: 'Extractions', name: 'Extraction — Simple', cost: 1500, description: 'Routine extraction under local anaesthesia' },
-    { category: 'Extractions', name: 'Extraction — Surgical', cost: 4000, description: 'Surgical/impacted tooth removal' },
-
-    { category: 'Prosthesis', name: 'Crown — Ceramic (Prosthesis)', cost: 6000, description: 'Ceramic crown, per unit' },
-    { category: 'Prosthesis', name: 'Crown — PFM', cost: 5000, description: 'Porcelain-fused-to-metal crown, per unit' },
-    { category: 'Prosthesis', name: 'Bridge (per unit)', cost: 5500, description: 'Fixed bridge, priced per unit' },
-    { category: 'Prosthesis', name: 'Complete Denture (per arch)', cost: 15000, description: 'Full removable denture, one arch' },
-    { category: 'Prosthesis', name: 'Removable Partial Denture', cost: 9000, description: 'Cast/acrylic partial denture' },
-
-    { category: 'Implants', name: 'Dental Implant (Prosthesis)', cost: 35000, description: 'Single implant fixture with crown' },
-    { category: 'Implants', name: 'Bone Graft', cost: 12000, description: 'Bone augmentation for implant site' },
-
-    { category: 'Miscellaneous', name: 'Consultation & Examination', cost: 500, description: 'Clinical examination and treatment planning' },
-    { category: 'Miscellaneous', name: 'Teeth Whitening (Bleaching)', cost: 8000, description: 'In-office whitening' },
-    { category: 'Miscellaneous', name: 'Night Guard / Splint', cost: 4000, description: 'Custom occlusal splint' },
-  ];
-  for (const c of catalog) {
-    await prisma.procedure.upsert({
-      where: { name: c.name },
-      update: {},
-      create: { name: c.name, cost: c.cost, description: `${c.category} — ${c.description ?? ''}`.trim() },
-    });
-  }
+  const procByName = async (name: string) =>
+    prisma.procedure.findUniqueOrThrow({ where: { clinicId_name: { clinicId: clinic.id, name } } });
+  const rct1 = await procByName('Root Canal Stage 1');
+  const rct2 = await procByName('Root Canal Stage 2');
 
   // ---- Inventory starter catalog (only when empty) -----------------------
-  if ((await prisma.inventoryItem.count()) === 0) {
+  if ((await prisma.inventoryItem.count({ where: { clinicId: clinic.id } })) === 0) {
     await prisma.inventoryItem.createMany({
       data: [
         { name: 'Examination gloves (box)', category: 'CONSUMABLE', unit: 'box', stockQty: 10, reorderLevel: 3, costPerUnit: 350 },
@@ -117,17 +80,19 @@ async function main() {
         { name: 'Lidocaine 2% cartridge', category: 'MEDICINE', unit: 'pcs', stockQty: 50, reorderLevel: 20, costPerUnit: 45 },
         { name: 'Diamond burs (assorted)', category: 'INSTRUMENT', unit: 'pcs', stockQty: 30, reorderLevel: 10, costPerUnit: 150 },
         { name: 'Alginate impression material', category: 'LAB_MATERIAL', unit: 'kg', stockQty: 2, reorderLevel: 1, costPerUnit: 900 },
-      ],
+      ].map((i) => ({ ...i, clinicId: clinic.id })),
     });
   }
 
-  // ---- Sample patients (only when DB is empty) ---------------------------
-  if ((await prisma.patient.count()) === 0) {
+  // ---- Sample patients (only when the clinic is empty) --------------------
+  if ((await prisma.patient.count({ where: { clinicId: clinic.id } })) === 0) {
     const doctor = await prisma.user.findUniqueOrThrow({ where: { email: 'doctor@clinic.local' } });
     const now = Date.now();
+    const cid = clinic.id;
 
     const john = await prisma.patient.create({
       data: {
+        clinicId: cid,
         code: 'P-0001',
         name: 'John Mathew',
         gender: 'MALE',
@@ -142,6 +107,7 @@ async function main() {
     });
     const meera = await prisma.patient.create({
       data: {
+        clinicId: cid,
         code: 'P-0002',
         name: 'Meera Krishnan',
         gender: 'FEMALE',
@@ -155,14 +121,15 @@ async function main() {
     });
     await prisma.timelineEvent.createMany({
       data: [
-        { patientId: john.id, type: 'NOTE', title: 'Patient registered' },
-        { patientId: meera.id, type: 'NOTE', title: 'Patient registered' },
+        { clinicId: cid, patientId: john.id, type: 'NOTE', title: 'Patient registered' },
+        { clinicId: cid, patientId: meera.id, type: 'NOTE', title: 'Patient registered' },
       ],
     });
 
     // John: completed RCT stage 1 12 days ago -> follow-up due in 2 days
     const rctTreatment = await prisma.treatment.create({
       data: {
+        clinicId: cid,
         patientId: john.id,
         procedureId: rct1.id,
         doctorId: doctor.id,
@@ -174,6 +141,7 @@ async function main() {
     });
     await prisma.followUp.create({
       data: {
+        clinicId: cid,
         patientId: john.id,
         procedureId: rct2.id,
         sourceTreatmentId: rctTreatment.id,
@@ -183,6 +151,7 @@ async function main() {
     });
     const invoice = await prisma.invoice.create({
       data: {
+        clinicId: cid,
         number: 'INV-2026-0001',
         patientId: john.id,
         treatmentId: rctTreatment.id,
@@ -193,14 +162,14 @@ async function main() {
       },
     });
     await prisma.payment.create({
-      data: { patientId: john.id, invoiceId: invoice.id, amount: 2000, method: 'UPI', paidAt: new Date(now - 12 * 86400_000) },
+      data: { clinicId: cid, patientId: john.id, invoiceId: invoice.id, amount: 2000, method: 'UPI', paidAt: new Date(now - 12 * 86400_000) },
     });
     await prisma.timelineEvent.createMany({
       data: [
-        { patientId: john.id, type: 'TREATMENT', title: 'Root Canal Stage 1 — completed', refType: 'Treatment', refId: rctTreatment.id, createdAt: new Date(now - 12 * 86400_000) },
-        { patientId: john.id, type: 'INVOICE', title: 'Invoice INV-2026-0001 — ₹3000', refType: 'Invoice', refId: invoice.id, createdAt: new Date(now - 12 * 86400_000) },
-        { patientId: john.id, type: 'PAYMENT', title: '₹2000 paid (upi)', createdAt: new Date(now - 12 * 86400_000) },
-        { patientId: john.id, type: 'FOLLOW_UP', title: 'Follow-up recommended: Root Canal Stage 2', createdAt: new Date(now - 12 * 86400_000) },
+        { clinicId: cid, patientId: john.id, type: 'TREATMENT', title: 'Root Canal Stage 1 — completed', refType: 'Treatment', refId: rctTreatment.id, createdAt: new Date(now - 12 * 86400_000) },
+        { clinicId: cid, patientId: john.id, type: 'INVOICE', title: 'Invoice INV-2026-0001 — ₹3000', refType: 'Invoice', refId: invoice.id, createdAt: new Date(now - 12 * 86400_000) },
+        { clinicId: cid, patientId: john.id, type: 'PAYMENT', title: '₹2000 paid (upi)', createdAt: new Date(now - 12 * 86400_000) },
+        { clinicId: cid, patientId: john.id, type: 'FOLLOW_UP', title: 'Follow-up recommended: Root Canal Stage 2', createdAt: new Date(now - 12 * 86400_000) },
       ],
     });
 
@@ -209,6 +178,7 @@ async function main() {
     tomorrow.setHours(10, 30, 0, 0);
     await prisma.appointment.create({
       data: {
+        clinicId: cid,
         patientId: john.id,
         doctorId: doctor.id,
         startsAt: tomorrow,
@@ -220,6 +190,7 @@ async function main() {
     const todaySlot = new Date(now + 2 * 3600_000);
     await prisma.appointment.create({
       data: {
+        clinicId: cid,
         patientId: meera.id,
         doctorId: doctor.id,
         startsAt: todaySlot,

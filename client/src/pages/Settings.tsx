@@ -220,7 +220,6 @@ export default function Settings() {
   }, [settings]);
 
   const { data: users } = useQuery<User[]>({ queryKey: ['users'], queryFn: () => api('/users'), enabled: isAdmin });
-  const { data: backups } = useQuery<Backup[]>({ queryKey: ['backups'], queryFn: () => api('/backup'), enabled: isAdmin });
 
   const saveSettings = useMutation({
     mutationFn: () => api('/settings', { method: 'PUT', body: form }),
@@ -229,10 +228,6 @@ export default function Settings() {
       setTimeout(() => setSavedMsg(''), 2000);
       qc.invalidateQueries({ queryKey: ['settings'] });
     },
-  });
-  const runBackup = useMutation({
-    mutationFn: () => api('/backup', { method: 'POST', body: {} }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backups'] }),
   });
   const runScheduler = useMutation({
     mutationFn: () => api<{ sent: number }>('/messages/run-scheduler', { method: 'POST', body: {} }),
@@ -425,47 +420,11 @@ export default function Settings() {
       </Card>
 
       {isAdmin && (
-        <Card
-          icon={DatabaseBackup}
-          title="Backups"
-          hint="Secure your data with daily snapshots or run manual backups on demand."
-          collapsible
-          action={
-            <Button onClick={() => runBackup.mutate()} disabled={runBackup.isPending}>
-              <span className="flex items-center gap-1.5"><DatabaseBackup size={15} />{runBackup.isPending ? 'Backing up…' : 'Backup now'}</span>
-            </Button>
-          }
-        >
-          <p className="text-sm text-slate-500 mb-3">
-            Automatic daily backup at 01:30. Each backup zips the SQLite database and every uploaded document.
-            Restore instructions are in <code className="text-xs bg-slate-100 px-1 rounded">server/RESTORE.md</code>.
+        <Card icon={DatabaseBackup} title="Backups" hint="Your data is backed up automatically." collapsible>
+          <p className="text-sm text-slate-500">
+            The platform takes an automatic backup of all data (including every uploaded document) daily at
+            01:30. To restore or export your clinic's data, contact Aatmam support.
           </p>
-          {!backups?.length && <Empty text="No backups yet" />}
-          <div className="space-y-1.5">
-            {backups?.map((b) => (
-              <div key={b.name} className="flex items-center gap-3 text-sm py-1.5 border-b border-slate-50 last:border-0">
-                <span className="font-mono text-xs text-slate-600 flex-1">{b.name}</span>
-                <span className="text-xs text-slate-400">{(b.size / 1024).toFixed(0)} KB</span>
-                <button
-                  className="text-indigo-600 text-xs hover:underline"
-                  onClick={async () => {
-                    const res = await fetch(`/api/backup/${b.name}/download`, {
-                      headers: { Authorization: `Bearer ${getToken()}` },
-                    });
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = b.name;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  Download
-                </button>
-              </div>
-            ))}
-          </div>
         </Card>
       )}
 

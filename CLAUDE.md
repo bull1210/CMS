@@ -1,8 +1,10 @@
 # CLAUDE.md
 
-Dental Clinic Management System (PMS) for a single dentist / small clinic.
-Local-first: one laptop runs everything; designed to migrate to cloud
-(PostgreSQL + S3 + real WhatsApp gateway) via config, not redesign.
+Dental Clinic Management System (PMS) — **multi-tenant SaaS** (Aatmam is the
+vendor; each clinic is a tenant). A laptop install still works: the seed
+creates one default clinic, so local-first = a SaaS of one. Cloud migration
+(PostgreSQL + S3 + real WhatsApp gateway) remains a config swap, not a
+redesign. Spec: `docs/superpowers/specs/2026-08-13-multi-tenancy-design.md`.
 
 ## Commands
 
@@ -26,8 +28,11 @@ cd client; npx tsc --noEmit
 ```
 
 Demo logins: `doctor@clinic.local/doctor123`, `assistant@clinic.local/assistant123`,
-`admin@clinic.local/admin123`. Roles: DOCTOR (full clinical + settings),
-ASSISTANT (patients, appointments, billing, stock, expenses), ADMIN (settings only).
+`admin@clinic.local/admin123` (all in the seeded "Smile Dental" clinic), and
+`super@aatmam.local/super123` (platform). Roles: DOCTOR (full clinical +
+settings), ASSISTANT (patients, appointments, billing, stock, expenses),
+ADMIN (settings only), SUPER_ADMIN (Aatmam staff — `/platform` clinic console
+ONLY, explicitly denied on clinic routes).
 
 ## Architecture
 
@@ -43,21 +48,45 @@ client/src/
                           (tap-to-dose Rx card), Brand ("Powered by" maker's mark)
   pages/                  one file per route; Print*.tsx are print-styled (window.print → PDF)
 server/src/
-  core/                   global: PrismaService, TimelineService, AuditService,
+  core/                   global: PrismaService (tenant-scoping middleware),
+                          tenancy.ts (AsyncLocalStorage tenant context),
+                          clinic-defaults.ts (new-clinic seed, shared with
+                          platform onboarding), TimelineService, AuditService,
                           AuthGuard (APP_GUARD), PrismaExceptionFilter (APP_FILTER), env.ts
   modules/<domain>/       thin controller (+ service when logic is non-trivial)
 server/prisma/schema.prisma   single source of truth for the data model
-server/storage/           uploads/ (served at /files/<key>) and backups/ (zips)
+server/storage/           uploads/c<clinicId>/ (served by the auth-checked
+                          files controller at /files/<key>) and backups/ (zips)
 ```
 
 Modules: auth, users, patients, procedures, diagnoses, treatments, appointments
 (+ risk.service = no-show scoring), billing, documents, prescriptions, followups,
 messaging (+ reminders.scheduler cron), dashboard, reports (incl. pnl/leakage/
-referrals), search, settings (+ backup), tooth-findings, plans, labworks,
-inventory, expenses. The **reports** module and route are hidden from the UI
-(no nav entry, no client route) but the backend endpoints remain.
+referrals), search, settings (+ backup — SUPER_ADMIN-only, whole-DB), tooth-
+findings, plans, labworks, inventory, expenses, files (auth-checked serving),
+platform (SUPER_ADMIN clinic console). The **reports** module and route are
+hidden from the UI (no nav entry, no client route) but the backend endpoints
+remain.
 
 ## Hard rules & conventions
+
+- **Multi-tenancy is enforced in `core/`, never in feature code.** Every
+  tenant model carries `clinicId`; Prisma middleware (`prisma.service.ts`)
+  auto-injects it on writes, merges it into reads (`findUnique` → scoped
+  `findFirst`), and ownership-checks unique-where update/delete. The context
+  comes from AsyncLocalStorage (`core/tenancy.ts`), seeded per-request by the
+  AuthGuard. **Deny-by-default: a tenant query with no context throws.**
+  Request-less code (crons, public webhooks, bootstrap) must wrap itself in
+  `tenancy.runAs(clinicId, fn)` / `runPrivileged(fn)` — and those helpers
+  await INSIDE the ALS scope because Prisma promises are lazy. The
+  `@default(0)` on clinicId only relaxes create TYPES (middleware injects the
+  real value; an actual 0 fails the FK). Per-clinic uniques: patient `code`,
+  invoice `number`, procedure/inventory `name`, setting `key` (composite
+  `[clinicId, key]` — the middleware rewrites `where: { key }` so call sites
+  stay simple; upserts need `as never` on that where). `User.email` stays
+  globally unique (login has no clinic picker). Never hand-write `clinicId`
+  filters in modules — the only exception is the platform module, which runs
+  bypassed and sets it explicitly.
 
 - **SQLite portability (enforced everywhere):** no Prisma enums (String columns
   validated by `const` arrays in services), no `Json` columns (JSON **text**
@@ -67,9 +96,12 @@ inventory, expenses. The **reports** module and route are hidden from the UI
   on every medical/financial write (handler-level overrides class-level). The
   guard re-checks `user.active` + role in the DB on every request — deactivation
   is instant. JWT_SECRET is auto-generated into `server/.env` on first boot.
-- **Roles are `ADMIN | DOCTOR | ASSISTANT`** (`ROLES` in `core/auth.guard.ts`;
-  the front-desk role was renamed from `RECEPTIONIST` — seed migrates legacy rows
-  via `updateMany`). Nav + patient tabs are gated per role in the client (see the
+- **Roles are `SUPER_ADMIN | ADMIN | DOCTOR | ASSISTANT`** (`ROLES` in
+  `core/auth.guard.ts`; clinic staff creation validates against `CLINIC_ROLES`
+  so a clinic admin can never mint a SUPER_ADMIN). The guard re-checks the
+  clinic's `active` flag too — deactivating a clinic locks out all its users
+  on the next request. SUPER_ADMIN is denied on any route that doesn't list it
+  in `@Roles`. Nav + patient tabs are gated per role in the client (see the
   role-gating bullet below); the server stays the real enforcer via `@Roles`.
 - **Safety guards (July 2026 audit, see `docs/AUDIT-2026-07.md`):**
   prescriptions cross-check the patient's `medicalHistory.allergies` against

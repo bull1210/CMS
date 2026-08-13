@@ -12,7 +12,7 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../core/prisma.service';
 import { AuditService } from '../../core/audit.service';
-import { AuthUser, CurrentUser, ROLES, Roles } from '../../core/auth.guard';
+import { AuthUser, CLINIC_ROLES, CurrentUser, Roles } from '../../core/auth.guard';
 
 const publicUser = { id: true, name: true, email: true, role: true, active: true, createdAt: true };
 
@@ -37,7 +37,8 @@ export class UsersController {
     if (!body?.name || !body?.email || !body?.password) {
       throw new BadRequestException('name, email and password are required');
     }
-    if (!(body.role in ROLES)) throw new BadRequestException('Invalid role');
+    // Clinic admins may only create clinic staff — SUPER_ADMIN is platform-only.
+    if (!CLINIC_ROLES.includes(body.role as never)) throw new BadRequestException('Invalid role');
     const user = await this.prisma.user.create({
       data: {
         name: body.name,
@@ -58,7 +59,7 @@ export class UsersController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { name?: string; email?: string; password?: string; role?: string; active?: boolean },
   ) {
-    if (body.role && !(body.role in ROLES)) throw new BadRequestException('Invalid role');
+    if (body.role && !CLINIC_ROLES.includes(body.role as never)) throw new BadRequestException('Invalid role');
     const data: Record<string, unknown> = {
       name: body.name,
       email: body.email?.toLowerCase(),

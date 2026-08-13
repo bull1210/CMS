@@ -137,22 +137,28 @@ export class PatientsService {
       }
     }
 
-    // The human-friendly code is derived from the autoincrement id, which makes
-    // it collision-free even under concurrent registrations (a count-based
-    // scheme would race).
+    // Per-clinic sequential code (every clinic starts at P-0001). Concurrent
+    // registrations are safe: the [clinicId, code] unique constraint catches
+    // the collision and we retry with the next number — the same sanctioned
+    // pattern invoice numbers use. (Id-derived codes would be collision-free
+    // but leak cross-tenant volume and skip numbers per clinic.)
     const { force: _force, ...data } = input;
-    const created = await this.prisma.patient.create({
-      data: {
-        code: `P-TMP-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-        ...normalize(data),
-      } as never,
-    });
-    const patient = await this.prisma.patient.update({
-      where: { id: created.id },
-      data: { code: `P-${String(created.id).padStart(4, '0')}` },
-    });
-    await this.timeline.add(patient.id, 'NOTE', 'Patient registered', undefined, 'Patient', patient.id);
-    return parsePatient(patient);
+    for (let attempt = 0; ; attempt++) {
+      const count = await this.prisma.patient.count(); // tenant-scoped: this clinic only
+      try {
+        const patient = await this.prisma.patient.create({
+          data: {
+            code: `P-${String(count + 1 + attempt).padStart(4, '0')}`,
+            ...normalize(data),
+          } as never,
+        });
+        await this.timeline.add(patient.id, 'NOTE', 'Patient registered', undefined, 'Patient', patient.id);
+        return parsePatient(patient);
+      } catch (e) {
+        const unique = (e as { code?: string }).code === 'P2002';
+        if (!unique || attempt >= 5) throw e;
+      }
+    }
   }
 
   async update(id: number, input: Partial<PatientInput>) {

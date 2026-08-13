@@ -4,7 +4,9 @@ export interface AuthUser {
   id: number;
   name: string;
   email: string;
-  role: 'ADMIN' | 'DOCTOR' | 'ASSISTANT';
+  role: 'SUPER_ADMIN' | 'ADMIN' | 'DOCTOR' | 'ASSISTANT';
+  clinicId: number | null; // null = platform (Aatmam) account
+  clinicName?: string | null;
 }
 
 export function getToken() {
@@ -66,6 +68,13 @@ export async function api<T = unknown>(
   }
   return res.json() as Promise<T>;
 }
+
+/**
+ * Uploaded files are auth-checked per clinic; <img>/<a> tags can't send an
+ * Authorization header, so the JWT rides along as ?token=.
+ */
+export const fileUrl = (key: string) =>
+  `/files/${key}?token=${encodeURIComponent(getToken() ?? '')}`;
 
 export const fmtMoney = (n: number | null | undefined) =>
   `₹${(n ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;

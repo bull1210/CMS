@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Building2,
   CalendarDays,
   ClipboardList,
   IndianRupee,
@@ -111,7 +112,7 @@ function GlobalSearch() {
  *   • assistant → Home, Patients, Appointments, Billing, Stock, Expenses
  *   • doctor    → everything, incl. Treatments and Settings
  */
-type Role = 'DOCTOR' | 'ASSISTANT' | 'ADMIN';
+type Role = 'DOCTOR' | 'ASSISTANT' | 'ADMIN' | 'SUPER_ADMIN';
 const nav: {
   to: string;
   label: string;
@@ -129,6 +130,7 @@ const nav: {
   { to: '/inventory', label: 'Stock', desc: 'Materials and supplies you keep in the clinic', icon: Package, section: 'inventory', roles: ['DOCTOR', 'ASSISTANT'] },
   { to: '/expenses', label: 'Expenses', desc: 'Money going out — rent, salaries, supplies', icon: Wallet, section: 'expenses', roles: ['DOCTOR', 'ASSISTANT'] },
   { to: '/settings', label: 'Settings', desc: 'Clinic details, staff logins and backups', icon: SettingsIcon, section: 'settings', roles: ['DOCTOR', 'ADMIN'] },
+  { to: '/platform', label: 'Clinics', desc: 'Every clinic on the Aatmam platform', icon: Building2, section: 'platform', roles: ['SUPER_ADMIN'] },
 ];
 
 export default function Layout() {
@@ -138,12 +140,16 @@ export default function Layout() {
   const section = sectionForPath(pathname);
   const visibleNav = nav.filter((n) => n.roles.includes((user?.role ?? '') as Role));
 
-  const ROLE_LABELS: Record<string, string> = { DOCTOR: 'Doctor', ADMIN: 'Administrator', ASSISTANT: 'Assistant' };
+  const ROLE_LABELS: Record<string, string> = { DOCTOR: 'Doctor', ADMIN: 'Administrator', ASSISTANT: 'Assistant', SUPER_ADMIN: 'Aatmam Platform' };
   const roleLabel = ROLE_LABELS[user?.role ?? ''] ?? user?.role;
+  const isPlatform = user?.role === 'SUPER_ADMIN';
 
+  // Platform staff have no clinic, so there are no clinic settings to load —
+  // the sidebar shows Aatmam branding instead.
   const { data: settings } = useQuery<Record<string, string>>({
     queryKey: ['settings'],
     queryFn: () => api('/settings'),
+    enabled: !isPlatform,
   });
 
   useEffect(() => {
@@ -167,8 +173,8 @@ export default function Layout() {
               </div>
             )}
             <div>
-              <div className="font-bold text-base leading-tight">{settings?.['clinic.name'] || 'Smile Dental'}</div>
-              <div className="text-[11px] text-slate-400">{settings?.['clinic.tagline'] || 'Clinic management'}</div>
+              <div className="font-bold text-base leading-tight">{isPlatform ? 'Aatmam' : settings?.['clinic.name'] || 'Smile Dental'}</div>
+              <div className="text-[11px] text-slate-400">{isPlatform ? 'Platform console' : settings?.['clinic.tagline'] || 'Clinic management'}</div>
             </div>
           </Link>
 
@@ -231,7 +237,7 @@ export default function Layout() {
 
         <div className="flex-1 ml-64 min-w-0">
           <header className="bg-white/80 backdrop-blur border-b border-slate-200 px-6 py-3 flex items-center gap-4 sticky top-0 z-30 no-print">
-            {user?.role !== 'ADMIN' && <GlobalSearch />}
+            {user?.role !== 'ADMIN' && !isPlatform && <GlobalSearch />}
           </header>
           <main className="px-5 py-4">
             <Outlet />

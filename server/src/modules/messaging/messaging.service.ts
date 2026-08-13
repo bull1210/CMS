@@ -30,7 +30,9 @@ export class MessagingService {
   ) {}
 
   async getSetting(key: string, fallback = ''): Promise<string> {
-    const row = await this.prisma.setting.findUnique({ where: { key } });
+    // findFirst (not findUnique): the tenant middleware scopes it to the
+    // caller's clinic — settings are per-clinic rows now.
+    const row = await this.prisma.setting.findFirst({ where: { key } });
     return row?.value ?? fallback;
   }
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../core/prisma.service';
+import { tenancy } from '../../core/tenancy';
 import { RiskService } from '../appointments/risk.service';
 import { MessagingService } from './messaging.service';
 
@@ -20,9 +21,25 @@ export class RemindersScheduler {
 
   @Cron('*/15 * * * *')
   async tick() {
+    // Cron has no request (and so no tenant context): fan out over every
+    // active clinic and run the existing per-clinic engine inside its scope.
+    // Suspended clinics get no automated messages — same spirit as the
+    // archived-patient rule one level down.
     try {
-      const results = await this.run();
-      if (results.sent > 0) this.log.log(`Sent ${results.sent} automated messages`);
+      const clinics = await this.prisma.clinic.findMany({
+        where: { active: true },
+        select: { id: true, name: true },
+      });
+      let sent = 0;
+      for (const clinic of clinics) {
+        try {
+          const results = await tenancy.runAs(clinic.id, () => this.run());
+          sent += results.sent;
+        } catch (e) {
+          this.log.error(`Scheduler failed for clinic ${clinic.id} (${clinic.name}): ${e}`);
+        }
+      }
+      if (sent > 0) this.log.log(`Sent ${sent} automated messages`);
     } catch (e) {
       this.log.error(`Scheduler run failed: ${e}`);
     }

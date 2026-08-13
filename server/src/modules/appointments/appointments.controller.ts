@@ -78,7 +78,7 @@ export class AppointmentsController {
     const localISOTime = new Date(start.getTime() - tzOffset).toISOString().slice(0, -1);
     const dateStr = localISOTime.slice(0, 10);
     
-    const clinicClosureRow = await this.prisma.setting.findUnique({ where: { key: 'clinic.closures' } });
+    const clinicClosureRow = await this.prisma.setting.findFirst({ where: { key: 'clinic.closures' } });
     if (clinicClosureRow?.value) {
       try {
         const c = JSON.parse(clinicClosureRow.value);
@@ -88,7 +88,7 @@ export class AppointmentsController {
       }
     }
 
-    const doctorClosureRow = await this.prisma.setting.findUnique({ where: { key: 'doctor.closures' } });
+    const doctorClosureRow = await this.prisma.setting.findFirst({ where: { key: 'doctor.closures' } });
     if (doctorClosureRow?.value) {
       try {
         const c = JSON.parse(doctorClosureRow.value);

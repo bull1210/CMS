@@ -26,6 +26,8 @@ import { PlansModule } from './modules/plans/plans.module';
 import { LabworksModule } from './modules/labworks/labworks.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { ExpensesModule } from './modules/expenses/expenses.module';
+import { FilesModule } from './modules/files/files.module';
+import { PlatformModule } from './modules/platform/platform.module';
 
 @Module({
   imports: [
@@ -57,6 +59,8 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
     LabworksModule,
     InventoryModule,
     ExpensesModule,
+    FilesModule,
+    PlatformModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

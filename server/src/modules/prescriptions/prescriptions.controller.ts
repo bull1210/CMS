@@ -181,7 +181,7 @@ export class PrescriptionsController {
   }
 
   private async readJson<T>(key: string, fallback: T): Promise<T> {
-    const row = await this.prisma.setting.findUnique({ where: { key } });
+    const row = await this.prisma.setting.findFirst({ where: { key } });
     if (!row) return fallback;
     try {
       const parsed = JSON.parse(row.value);
@@ -193,8 +193,10 @@ export class PrescriptionsController {
 
   private async writeJson(key: string, value: unknown) {
     const json = JSON.stringify(value);
+    // `where: { key }` is rewritten to the [clinicId, key] composite by the
+    // tenant middleware (hence the cast).
     await this.prisma.setting.upsert({
-      where: { key },
+      where: { key } as never,
       update: { value: json },
       create: { key, value: json },
     });

@@ -18,8 +18,11 @@ const dbFile = () => {
  * Backup = one zip containing the SQLite DB + all uploaded attachments.
  * Restore: stop the server, unzip over server/prisma + server/storage/uploads,
  * restart (see server/RESTORE.md).
+ *
+ * Multi-tenant: the zip contains EVERY clinic's data, so this is platform
+ * (SUPER_ADMIN) territory. Per-clinic export is a future feature.
  */
-@Roles('ADMIN')
+@Roles('SUPER_ADMIN')
 @Controller('backup')
 export class BackupController {
   constructor(private audit: AuditService) {}

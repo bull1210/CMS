@@ -25,10 +25,14 @@ const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.pdf'];
 const uploadDir = () => process.env.UPLOAD_DIR ?? './storage/uploads';
 
 // Local disk storage now; storedPath is a relative key so a future S3/Azure
-// adapter only has to swap read/write, not the data model.
+// adapter only has to swap read/write, not the data model. Files live under a
+// per-clinic folder (c<clinicId>/…) and are served by the auth-checked files
+// controller — an X-ray URL must never be readable by another clinic.
+// Multer runs after the AuthGuard, so req.user is available here.
+const clinicDir = (req: unknown) => `c${(req as { user?: { clinicId?: number } }).user?.clinicId ?? 0}`;
 const storage = diskStorage({
-  destination: (_req, _file, cb) => {
-    const dir = join(process.cwd(), uploadDir());
+  destination: (req, _file, cb) => {
+    const dir = join(process.cwd(), uploadDir(), clinicDir(req));
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
@@ -88,7 +92,7 @@ export class DocumentsController {
         patientId,
         category,
         filename: file.originalname,
-        storedPath: file.filename,
+        storedPath: `c${user.clinicId}/${file.filename}`,
         mimeType: file.mimetype,
         size: file.size,
         notes: body.notes,

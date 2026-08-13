@@ -15,7 +15,7 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react';
-import { api, fmtDate, fmtDateTime, fmtMoney, getUser } from '../api';
+import { api, fileUrl, fmtDate, fmtDateTime, fmtMoney, getUser } from '../api';
 import { Badge, Button, Card, Empty, Field, Hint, inputCls, Modal, Spinner } from '../components/ui';
 import { FormularyDatalist, MedicineEditor, describeFrequency } from '../components/MedicineEditor';
 import { checkAllergies } from '../allergyCheck';
@@ -617,10 +617,10 @@ function DocumentsTab({ patientId }: { patientId: number }) {
           <div key={d.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             {d.mimeType.startsWith('image/') ? (
               <button className="w-full" onClick={() => setViewer(d)}>
-                <img src={`/files/${d.storedPath}`} alt={d.filename} className="w-full h-36 object-cover hover:opacity-90" />
+                <img src={fileUrl(d.storedPath)} alt={d.filename} className="w-full h-36 object-cover hover:opacity-90" />
               </button>
             ) : (
-              <a href={`/files/${d.storedPath}`} target="_blank" rel="noreferrer" className="flex items-center justify-center h-36 bg-slate-50 text-slate-400 hover:text-indigo-500">
+              <a href={fileUrl(d.storedPath)} target="_blank" rel="noreferrer" className="flex items-center justify-center h-36 bg-slate-50 text-slate-400 hover:text-indigo-500">
                 <FileText size={40} />
               </a>
             )}
@@ -640,13 +640,13 @@ function DocumentsTab({ patientId }: { patientId: number }) {
         <Modal title={`${viewer.category.replace('_', ' ')} — ${viewer.filename}`} onClose={() => setViewer(null)} wide>
           <div className="flex gap-4 overflow-x-auto">
             {/* Selected image large; other images as thumbnails for comparison */}
-            <a href={`/files/${viewer.storedPath}`} target="_blank" rel="noreferrer" className="flex-1" title="Open full size">
-              <img src={`/files/${viewer.storedPath}`} alt={viewer.filename} className="max-h-[70vh] w-full rounded-lg cursor-zoom-in object-contain" />
+            <a href={fileUrl(viewer.storedPath)} target="_blank" rel="noreferrer" className="flex-1" title="Open full size">
+              <img src={fileUrl(viewer.storedPath)} alt={viewer.filename} className="max-h-[70vh] w-full rounded-lg cursor-zoom-in object-contain" />
             </a>
             <div className="w-32 space-y-2 shrink-0">
               {images.filter((i) => i.id !== viewer.id).map((i) => (
                 <button key={i.id} onClick={() => setViewer(i)} className="block w-full">
-                  <img src={`/files/${i.storedPath}`} alt={i.filename} className="rounded-md border border-slate-200 hover:border-indigo-400" />
+                  <img src={fileUrl(i.storedPath)} alt={i.filename} className="rounded-md border border-slate-200 hover:border-indigo-400" />
                   <span className="text-[10px] text-slate-400">{fmtDate(i.createdAt)}</span>
                 </button>
               ))}

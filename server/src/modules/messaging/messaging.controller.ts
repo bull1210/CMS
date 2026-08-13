@@ -11,6 +11,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma.service';
+import { tenancy } from '../../core/tenancy';
 import { MessagingService } from './messaging.service';
 import { RemindersScheduler } from './reminders.scheduler';
 import { Public } from '../../core/auth.guard';
@@ -69,18 +70,26 @@ export class MessagingController {
     // This endpoint is public (gateways can't log in) but must not be spoofable:
     // once `messaging.inboundToken` is set, requests need the shared secret.
     // Empty setting keeps local/offline demos working without a gateway.
-    const expected = await this.messaging.getSetting('messaging.inboundToken');
-    if (expected && queryToken !== expected && headerToken !== expected) {
-      throw new UnauthorizedException('Invalid webhook token');
-    }
     if (!body?.from || !body?.body) throw new BadRequestException('from and body required');
-    const last = await this.prisma.message.findFirst({
-      where: { to: { contains: body.from.replace(/^\+/, '') }, status: 'SENT', response: null },
-      orderBy: { sentAt: 'desc' },
-    });
+    // Public webhook = no tenant context. Match the reply to the most recent
+    // outbound message across clinics (privileged), then do all processing
+    // inside that message's clinic scope — including the token check, since
+    // each clinic may configure its own inbound token.
+    const last = await tenancy.runPrivileged(() =>
+      this.prisma.message.findFirst({
+        where: { to: { contains: body.from.replace(/^\+/, '') }, status: 'SENT', response: null },
+        orderBy: { sentAt: 'desc' },
+      }),
+    );
     if (!last) return { matched: false };
-    await this.messaging.recordReply(last.id, body.body);
-    return { matched: true, messageId: last.id };
+    return tenancy.runAs(last.clinicId, async () => {
+      const expected = await this.messaging.getSetting('messaging.inboundToken');
+      if (expected && queryToken !== expected && headerToken !== expected) {
+        throw new UnauthorizedException('Invalid webhook token');
+      }
+      await this.messaging.recordReply(last.id, body.body);
+      return { matched: true, messageId: last.id };
+    });
   }
 
   @Post('run-scheduler')

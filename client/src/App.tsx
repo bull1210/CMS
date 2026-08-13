@@ -11,6 +11,7 @@ import Billing from './pages/Billing';
 import Inventory from './pages/Inventory';
 import Expenses from './pages/Expenses';
 import Settings from './pages/Settings';
+import Platform from './pages/Platform';
 import PrintInvoice from './pages/PrintInvoice';
 import PrintPrescription from './pages/PrintPrescription';
 import PrintEstimate from './pages/PrintEstimate';
@@ -20,9 +21,14 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return getToken() ? children : <Navigate to="/login" replace />;
 }
 
-/** Admins work only in Settings — send them there instead of the clinical home. */
+/**
+ * Admins work only in Settings; platform staff only in the clinic console —
+ * send each to their home instead of the clinical dashboard.
+ */
 function Home() {
-  return getUser()?.role === 'ADMIN' ? <Navigate to="/settings" replace /> : <Dashboard />;
+  const role = getUser()?.role;
+  if (role === 'SUPER_ADMIN') return <Navigate to="/platform" replace />;
+  return role === 'ADMIN' ? <Navigate to="/settings" replace /> : <Dashboard />;
 }
 
 export default function App() {
@@ -43,6 +49,7 @@ export default function App() {
         <Route path="inventory" element={<Inventory />} />
         <Route path="expenses" element={<Expenses />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="platform" element={<Platform />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

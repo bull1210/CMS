@@ -129,6 +129,17 @@ export const SECTIONS: Record<string, Section> = {
     dot: 'bg-slate-400',
     ring: 'focus:ring-slate-500',
   },
+  platform: {
+    key: 'platform',
+    header: 'from-violet-600 via-purple-600 to-fuchsia-600',
+    solid: 'bg-violet-600 hover:bg-violet-700',
+    accent: 'bg-violet-500',
+    tint: 'bg-violet-50',
+    text: 'text-violet-700',
+    chip: 'bg-violet-100 text-violet-700',
+    dot: 'bg-violet-400',
+    ring: 'focus:ring-violet-500',
+  },
 };
 
 /** Maps a URL path to its section. Longest prefix wins. */
@@ -141,6 +152,7 @@ export function sectionForPath(pathname: string): Section {
   if (pathname.startsWith('/expenses')) return SECTIONS.expenses;
   if (pathname.startsWith('/reports')) return SECTIONS.reports;
   if (pathname.startsWith('/settings')) return SECTIONS.settings;
+  if (pathname.startsWith('/platform')) return SECTIONS.platform;
   return SECTIONS.dashboard;
 }
 
