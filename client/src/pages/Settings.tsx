@@ -95,9 +95,9 @@ function UserModal({ initial, onClose }: { initial?: User; onClose: () => void }
         <Field label="Name *"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
         <Field label="Email *"><input className={inputCls} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
         <Field
-          label={initial && initial !== 'new' ? 'New password' : 'Password'}
-          required={!initial || initial === 'new'}
-          hint={initial && initial !== 'new' ? 'Leave blank to keep their current password.' : undefined}
+          label={initial ? 'New password' : 'Password'}
+          required={!initial}
+          hint={initial ? 'Leave blank to keep their current password.' : undefined}
         >
           <input type="password" className={inputCls} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </Field>
@@ -120,7 +120,7 @@ function UserModal({ initial, onClose }: { initial?: User; onClose: () => void }
       </div>
       <div className="flex justify-end gap-2 mt-4">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => save.mutate()} disabled={!form.name || !form.email || ((!initial || initial === 'new') && !form.password) || save.isPending}>Save</Button>
+        <Button onClick={() => save.mutate()} disabled={!form.name || !form.email || (!initial && !form.password) || save.isPending}>Save</Button>
       </div>
     </Modal>
   );

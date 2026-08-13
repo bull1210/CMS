@@ -167,7 +167,7 @@ function NewAppointmentModal({ date, initialTime, initialDoctorId, onClose }: { 
         }
       }
     }
-    save.mutate();
+    save.mutate({});
   };
 
   if (mismatchPrompt) {
@@ -389,8 +389,7 @@ export default function Appointments() {
         const next = { ...(doctorClosures[filterDocId] || {}) };
         if (comment) next[date] = comment;
         else delete next[date];
-        const payload = { ...doctorClosures, [filterDocId]: next };
-        await api('/settings/doctor-closures', { method: 'PUT', body: { doctorId: filterDocId, closures: JSON.stringify(payload[filterDocId]) } });
+        await api('/settings/doctor-closures', { method: 'PUT', body: { doctorId: filterDocId, closures: JSON.stringify(next) } });
       } else {
         const next = { ...closures };
         if (comment) next[date] = comment;
@@ -657,7 +656,7 @@ export default function Appointments() {
             icon={CalendarDays}
             text={view === 'week' ? 'Nothing booked this week' : 'Nothing booked this month'}
             hint="Your calendar is clear. Book a patient in, or use the arrows above to look at another week."
-            action={<Button size="lg" onClick={() => setShowNew(true)}><CalendarPlus size={17} /> Book an appointment</Button>}
+            action={<Button size="lg" onClick={() => setNewApptData({ date: anchor })}><CalendarPlus size={17} /> Book an appointment</Button>}
           />
         </div>
       )}

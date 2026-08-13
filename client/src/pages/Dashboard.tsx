@@ -7,6 +7,7 @@ import {
   CalendarPlus,
   CheckCircle2,
   FlaskConical,
+  Package,
   PhoneCall,
   Stethoscope,
   Sun,
@@ -313,7 +314,7 @@ export default function Dashboard() {
                       {f.note?.startsWith('RESCHEDULE:') && (
                         <button
                           onClick={() => {
-                            const docMatch = f.note.match(/Doctor ID: (\d+)/);
+                            const docMatch = f.note?.match(/Doctor ID: (\d+)/);
                             const rescheduleDocId = docMatch && docMatch[1] ? parseInt(docMatch[1], 10) : undefined;
                             navigate(`/patients/${f.patient.id}`, { state: { openReschedule: f.id, rescheduleDocId } });
                           }}

@@ -1472,7 +1472,7 @@ export default function PatientDetail() {
           patientName={patient?.name}
           followUpId={typeof booking === 'object' ? booking.followUpId : undefined}
           procedureName={typeof booking === 'object' ? booking.procedureName : undefined}
-          defaultDoctorId={typeof booking === 'object' ? booking.doctorId : undefined}
+          defaultDoctorId={typeof booking === 'object' ? booking.defaultDoctorId : undefined}
           onClose={() => {
             if (location.state?.openReschedule) {
               navigate(`/patients/${patientId}`, { replace: true });
@@ -1607,7 +1607,7 @@ export function BookAppointmentModal({
         }
       }
     }
-    save.mutate();
+    save.mutate({});
   };
 
   if (mismatchPrompt) {
