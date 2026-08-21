@@ -4,6 +4,9 @@
   "private": true,
   "description": "Clinic Management System - API server (NestJS + Prisma + SQLite)",
   "scripts": {
+    "prep:env": "node -e \"const fs=require('fs');if(!fs.existsSync('.env')){fs.copyFileSync('.env.example','.env');console.log('[setup] created server/.env from .env.example')}\"",
+    "predev": "npm run prep:env",
+    "predb:push": "npm run prep:env",
     "dev": "ts-node --transpile-only src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",

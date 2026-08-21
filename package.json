@@ -6,6 +6,6 @@
   "scripts": {
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
-    "setup": "npm --prefix server install && npm --prefix client install && npm --prefix server run db:push && npm --prefix server run db:seed"
+    "setup": "npm --prefix server install && npm --prefix client install && npm --prefix server run prep:env && npm --prefix server run db:push && npm --prefix server run db:seed"
   }
 }

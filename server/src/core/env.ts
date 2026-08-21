@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, appendFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { join } from 'path';
 
@@ -21,10 +21,19 @@ export function loadEnv() {
 // A guessable JWT secret would let anyone on the LAN forge admin tokens.
 // Generate a strong one on first boot and persist it so sessions survive restarts.
 function ensureJwtSecret(envPath: string) {
-  if (process.env.JWT_SECRET && process.env.JWT_SECRET !== 'dev-secret') return;
+  // Placeholders — including the one shipped in .env.example — count as unset.
+  const PLACEHOLDERS = ['dev-secret', 'change-me'];
+  const current = process.env.JWT_SECRET;
+  if (current && !PLACEHOLDERS.includes(current)) return;
   const secret = randomBytes(32).toString('hex');
   try {
-    appendFileSync(envPath, `${existsSync(envPath) ? '\n' : ''}JWT_SECRET=${secret}\n`);
+    const text = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+    // Rewrite an existing placeholder line rather than appending: the loader
+    // keeps the FIRST occurrence, so a second JWT_SECRET would be ignored.
+    const next = /^\s*JWT_SECRET\s*=/m.test(text)
+      ? text.replace(/^\s*JWT_SECRET\s*=.*$/m, `JWT_SECRET=${secret}`)
+      : (text && !text.endsWith('\n') ? text + '\n' : text) + `JWT_SECRET=${secret}\n`;
+    writeFileSync(envPath, next);
     process.env.JWT_SECRET = secret;
     console.log('[env] Generated and persisted a new JWT_SECRET in .env');
   } catch (e) {

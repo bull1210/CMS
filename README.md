@@ -20,7 +20,7 @@ migrate to the cloud (PostgreSQL + S3) without redesign.
 # 1. API server (port 4000)
 cd server
 npm install
-npx prisma db push       # creates prisma/clinic.db
+npm run db:push          # creates server/.env (from .env.example) + prisma/clinic.db
 npm run db:seed          # demo users, procedure catalog, sample patients
 npm run dev
 
